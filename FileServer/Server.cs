@@ -10,13 +10,15 @@ internal class Server(ServerConfiguration configuration)
     private const int MaximumMessageSize = 65507;
         
     private readonly UdpClient _client = new (configuration.Port);
-
+    private readonly Logger _logger = configuration.LoggerCreator.CreateLogger("Server");
+    
     private int _taskCount;
     
     private volatile bool _stop, _stopped;
     
     internal void Start()
     {
+        _logger.Info($"Starting server on port {configuration.Port}");
         while (true)
         {
             IPEndPoint? ep = null;
@@ -28,6 +30,7 @@ internal class Server(ServerConfiguration configuration)
         while (_taskCount > 0)
             Thread.Sleep(100);
         _client.Close();
+        _logger.Info("Server stopped");
         _stopped = true;
     }
 
@@ -58,8 +61,8 @@ internal class Server(ServerConfiguration configuration)
         User user;
         try
         {
-            (user, var newData) = configuration.UserProvider.GetUser(data);
-            decrypted = configuration.CryptoPlugin.Decrypt(user.Key, newData);
+            (user, var idx) = configuration.UserProvider.GetUser(data);
+            decrypted = configuration.CryptoPlugin.Decrypt(user.Key, data, idx);
         }
         catch (Exception e)
         {

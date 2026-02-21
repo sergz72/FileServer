@@ -92,11 +92,11 @@ public class ChaCha20: IDisposable
             _state[13]++;
     }
     
-    public byte[] Encrypt(byte[] data)
+    public byte[] Encrypt(byte[] data, int offset, int length)
     {
-        var result = new byte[data.Length];
-        var offset = 0;
-        while (offset < data.Length)
+        var result = new byte[length];
+        var idx = 0;
+        while (length > 0)
         {
             if (_position == KeyStreamLengthBytes)
             {
@@ -104,11 +104,11 @@ public class ChaCha20: IDisposable
                 _position = 0;
             }
 
-            var l = Math.Min(KeyStreamLengthBytes - _position, data.Length - offset);
+            var l = Math.Min(KeyStreamLengthBytes - _position, length);
+            length -= l;
             while (l > 0)
             {
-                result[offset] = (byte)(data[offset] ^ GetKeyStreamByte());
-                offset++;
+                result[idx++] = (byte)(data[offset++] ^ GetKeyStreamByte());
                 l--;
             }
         }

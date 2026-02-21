@@ -22,7 +22,9 @@ public class ChaCha20Tests
         var data = RandomNumberGenerator.GetBytes(1024);
         var encrypted = crypto.Encrypt(key, data);
         Assert.That(encrypted, Has.Length.EqualTo(data.Length + 12 + 32 + 12 + 32));
-        var decrypted = crypto.Decrypt(key, encrypted);
+        var withPrefix = new byte[encrypted.Length + 4];
+        Array.Copy(encrypted, 0, withPrefix, 4, encrypted.Length);
+        var decrypted = crypto.Decrypt(key, withPrefix, 4);
         Assert.That(decrypted, Is.EqualTo(data));
     }
 }

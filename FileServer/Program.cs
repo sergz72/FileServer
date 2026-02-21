@@ -13,7 +13,7 @@ try
 }
 catch (Exception e)
 {
-    Console.WriteLine(e.Message);
+    Console.WriteLine(e.InnerException != null ? e.InnerException.Message : e.Message);
     Usage();
     return;
 }
@@ -26,7 +26,7 @@ try
 }
 catch (Exception e)
 {
-    Console.WriteLine(e.Message);
+    Console.WriteLine(e.InnerException != null ? e.InnerException.Message : e.Message);
     return;
 }
 
@@ -42,7 +42,7 @@ try
 }
 catch (Exception e)
 {
-    Console.WriteLine(e.Message);
+    Console.WriteLine(e.InnerException != null ? e.InnerException.Message : e.Message);
 }
 
 return;

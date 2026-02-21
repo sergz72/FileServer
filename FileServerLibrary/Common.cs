@@ -13,7 +13,7 @@ public interface ICommand
 public interface ICryptoPlugin : IPlugin
 {
     byte[] Encrypt(byte[]key, byte[] data);
-    byte[] Decrypt(byte[]key, byte[] data);
+    byte[] Decrypt(byte[]key, byte[] data, int idx);
 }
 
 public interface IDecoderPlugin : IPlugin
@@ -29,7 +29,7 @@ public interface IStoragePlugin : IPlugin
 
 public interface IUserProviderPlugin: IPlugin
 {
-    (User, byte[]) GetUser(byte[] data);
+    (User, int) GetUser(byte[] data);
 }
 
 public sealed record ServerConfigurationParameters(
@@ -107,8 +107,8 @@ public sealed class ChaCha20CryptoPlugin: ICryptoPlugin
         var dataCipher = new ChaCha20(dataKeyAndNonce[..32], dataKeyAndNonce[32..]);
         var nonce = RandomNumberGenerator.GetBytes(12);
         var cipher = new ChaCha20(key, nonce);
-        var encryptedKeyAndNonce = cipher.Encrypt(dataKeyAndNonce);
-        var encryptedData = dataCipher.Encrypt(data);
+        var encryptedKeyAndNonce = cipher.Encrypt(dataKeyAndNonce, 0, 12+32);
+        var encryptedData = dataCipher.Encrypt(data, 0, data.Length);
         var final = new byte[nonce.Length + encryptedKeyAndNonce.Length + encryptedData.Length + 32];
         nonce.CopyTo(final, 0);
         encryptedKeyAndNonce.CopyTo(final, nonce.Length);
@@ -118,19 +118,20 @@ public sealed class ChaCha20CryptoPlugin: ICryptoPlugin
         return final;
     }
 
-    public byte[] Decrypt(byte[] key, byte[] data)
+    public byte[] Decrypt(byte[] key, byte[] data, int idx)
     {
         if (key.Length != 32) throw new Exception("Invalid encryption key");
-        if (data.Length < 32+32+12+12+1)
+        if (data.Length < 32+32+12+12+1+idx)
             throw new Exception("Invalid response");
         var hmac = new HMACSHA256(key);
-        var hash = hmac.ComputeHash(data, 0, data.Length - 32);
+        var hash = hmac.ComputeHash(data, idx, data.Length - 32 - idx);
         if (!hash.SequenceEqual(data.AsSpan(data.Length - 32, 32)))
             throw new Exception("Invalid response hash");
-        var cipher = new ChaCha20(key, data[..12]);
-        var encryptedKeyAndNonce = data[12..(12 + 32 + 12)];
-        var decryptedKeyAndNonce = cipher.Encrypt(encryptedKeyAndNonce);
+        var keyAndNonceOffset = 12 + idx;
+        var cipher = new ChaCha20(key, data[idx..keyAndNonceOffset]);
+        var decryptedKeyAndNonce = cipher.Encrypt(data, keyAndNonceOffset, 12+32);
         cipher = new ChaCha20(decryptedKeyAndNonce[..32], decryptedKeyAndNonce[32..]);
-        return cipher.Encrypt(data[(12+32+12)..^32]);
+        var dataOffset = keyAndNonceOffset + 32 + 12;
+        return cipher.Encrypt(data, dataOffset, data.Length - dataOffset - 32);
     }
 }
