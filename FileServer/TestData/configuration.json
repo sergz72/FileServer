@@ -1,0 +1,17 @@
+{
+  "Port": 11111,
+  "Plugins": ["../HomeAccountingLibrary/bin/Debug/net10.0/HomeAccountingLibrary.dll"],
+  "Parameters": {
+    "encryptionKeyFileName": "TestData/encryption.key",
+    "logFileName": "log.txt",
+    "baseFolder": "TestData/data",
+    "keyDivider": 10000,
+    "Users": [
+      {"Id": 11223344, "Name":  "User1", "KeyFileName": "key.dat", "Databases": {"db1": "rw", "db2": "r"}}
+    ]
+  },
+  "CryptoPlugin": "ChaCha20CryptoPlugin",
+  "DecoderPlugin": "HomeAccountingDecoder",
+  "StoragePlugin": "HomeAccountingFileStorage",
+  "LoggerCreator": "ConsoleLoggerCreator"
+}
