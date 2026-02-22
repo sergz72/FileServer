@@ -21,12 +21,39 @@ public interface IDecoderPlugin : IPlugin
     ICommand Decode(Logger logger, byte[] data);
 }
 
+public record KeyValue(int Key, int Version, byte[] Value)
+{
+    public void ToBinary(BinaryWriter writer)
+    {
+        writer.Write(Version);
+        writer.Write(Key);
+        writer.Write(Value.Length);
+        writer.Write(Value);
+    }
+
+    public static List<KeyValue> From(BinaryReader reader)
+    {
+        var length = reader.ReadInt32();
+        var result = new List<KeyValue>(length);
+        while (length-- > 0)
+        {
+            var key = reader.ReadInt32();
+            var valueLength = reader.ReadInt32();
+            result.Add(new KeyValue(key, 0, reader.ReadBytes(valueLength)));
+        }
+        return result;
+    }
+}
+
 public interface IStoragePlugin : IPlugin
 {
-    IEnumerable<(int, byte[])> Get(string dbName, int fromKey, int toKey, string? propertyName = null);
-    int GetFileVersion(string dbName, int key, string? propertyName = null);
-    byte[]? GetLast(string dbName, int key, out int factKey, string? propertyName = null);
-    void Set(string dbName, Dictionary<int, byte[]> items, string? propertyName = null);
+    // database version and IEnumerable of KeyValue
+    (int, IEnumerable<KeyValue>) Get(string dbName, int from, int to, string? propertyName = null);
+    // database version and file version
+    (int, int) GetFileVersion(string dbName, int key, string? propertyName = null);
+    // database version and KeyValue
+    (int, KeyValue?) GetLast(string dbName, int from, int to, string? propertyName = null);
+    void Set(string dbName, int expectedVersion, List<KeyValue> data, string? propertyName = null);
 }
 
 public interface IUserProviderPlugin: IPlugin

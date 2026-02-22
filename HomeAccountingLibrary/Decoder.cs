@@ -1,14 +1,10 @@
 ﻿using System.Text;
 using FileServerLibrary;
-using HomeAccountingLibrary.commands;
-using HomeAccountingLibrary.entities;
 
 namespace HomeAccountingLibrary;
 
 public class HomeAccountingDecoder: IDecoderPlugin
 {
-    internal const int MaxDate = 99999999;
-    
     public HomeAccountingDecoder(ServerConfigurationParameters parameters)
     {
     }
@@ -21,38 +17,49 @@ public class HomeAccountingDecoder: IDecoderPlugin
         var commandId = reader.ReadByte();
         return commandId switch
         {
-            0 => BuildGetDictsVersionCommand(reader),
-            1 => BuildGetLastCommand(reader),
-            2 => BuildAddOperationCommand(reader),
+            0 => BuildGetCommand(reader),
+            1 => BuildSetCommand(reader),
+            2 => BuildGetLastCommand(reader),
+            3 => BuildGetFileVersionCommand(reader),
             _ => throw new ArgumentException($"Unknown command {commandId}")
         };
     }
 
-    private static ICommand BuildGetDictsVersionCommand(BinaryReader reader)
+    private ICommand BuildSetCommand(BinaryReader reader)
     {
         var dbName = GetString(reader);
-        if (reader.BaseStream.Position != reader.BaseStream.Length) throw new ArgumentException("GetDictsVersionCommand: wrong data length");
-        return new GetFileVersionCommand(dbName, 0);
+        var expectedVersion = reader.ReadInt32();
+        var data = KeyValue.From(reader);
+        if (reader.BaseStream.Position != reader.BaseStream.Length) throw new ArgumentException("SetCommand: wrong data length");
+        return new SetCommand(dbName, expectedVersion, data);
     }
 
-    private ICommand BuildGetLastCommand(BinaryReader reader)
+    private static ICommand BuildGetCommand(BinaryReader reader)
     {
         var dbName = GetString(reader);
-        if (reader.BaseStream.Position + 4 != reader.BaseStream.Length) throw new ArgumentException("GetLastCommand: wrong data length");
+        if (reader.BaseStream.Position + 8 != reader.BaseStream.Length) throw new ArgumentException("GetCommand: wrong data length");
+        var from = reader.ReadInt32();
+        var to = reader.ReadInt32();
+        return new GetCommand(dbName, from, to);
+    }
+
+    private static ICommand BuildGetFileVersionCommand(BinaryReader reader)
+    {
+        var dbName = GetString(reader);
         var key = reader.ReadInt32();
-        return new GetLastCommand(dbName, key);
+        if (reader.BaseStream.Position != reader.BaseStream.Length) throw new ArgumentException("GetFileVersionCommand: wrong data length");
+        return new GetFileVersionCommand(dbName, key);
     }
 
-    private ICommand BuildAddOperationCommand(BinaryReader reader)
+    private static ICommand BuildGetLastCommand(BinaryReader reader)
     {
         var dbName = GetString(reader);
-        var key = reader.ReadInt32();
-        var operation = FinanceOperation.FromBinary(reader);
-        var changes = FinanceRecord.BuildTotalsFromBinary(reader);
-        if (reader.BaseStream.Position != reader.BaseStream.Length) throw new ArgumentException("AddOperationCommand: wrong data length");
-        return new AddOperationCommand(dbName, key, operation, changes);
+        if (reader.BaseStream.Position + 8 != reader.BaseStream.Length) throw new ArgumentException("GetLastCommand: wrong data length");
+        var from = reader.ReadInt32();
+        var to = reader.ReadInt32();
+        return new GetLastCommand(dbName, from, to);
     }
-
+    
     private static string GetString(BinaryReader reader)
     {
         var length = reader.ReadByte();

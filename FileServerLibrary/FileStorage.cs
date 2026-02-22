@@ -1,43 +1,78 @@
-using System.Xml.Linq;
-
 namespace FileServerLibrary;
 
 public sealed class FileStorage: IStoragePlugin
 {
-    private readonly bool _hasProperties;
     private readonly string _baseFolder;
     private readonly int _keyDivider;
+    private readonly ReaderWriterLockSlim _lock;
+
+    private int _dbVersion;
     
     public FileStorage(ServerConfigurationParameters parameters)
     {
-        _hasProperties = parameters.GetBoolParameterOrDefault("storageHasProperties", false);
         _baseFolder = parameters.GetStringParameter("baseFolder");
         _keyDivider = parameters.GetIntParameter("keyDivider");
+        _lock = new ReaderWriterLockSlim();
+        _dbVersion = 1;
     }
 
-    public IEnumerable<(int, byte[])> Get(string dbName, int fromKey, int toKey, string? propertyName = null)
+    public (int, IEnumerable<KeyValue>) Get(string dbName, int from, int to, string? propertyName = null)
     {
+        _lock.EnterReadLock();
+        try
+        {
+        }
+        finally
+        {
+            _lock.ExitReadLock();
+        }
         throw new NotImplementedException();
     }
 
-    public int GetFileVersion(string dbName, int key, string? propertyName = null)
+    public (int, int) GetFileVersion(string dbName, int key, string? propertyName = null)
     {
         var path = BuildPath(dbName, key, propertyName);
-        return GetFileVersion(path);
+        _lock.EnterReadLock();
+        try
+        {
+            return (_dbVersion, GetFileVersion(path));
+        }
+        finally
+        {
+            _lock.ExitReadLock();
+        }
     }
     
-    public byte[]? GetLast(string dbName, int key, out int factKey, string? propertyName = null)
+    public (int, KeyValue?) GetLast(string dbName, int from, int to, string? propertyName = null)
     {
+        _lock.EnterReadLock();
+        try
+        {
+        }
+        finally
+        {
+            _lock.ExitReadLock();
+        }
         throw new NotImplementedException();
     }
 
-    public void Set(string dbName, Dictionary<int, byte[]> items, string? propertyName = null)
+    public void Set(string dbName, int expectedVersion, List<KeyValue> data, string? propertyName = null)
     {
-        foreach (var (key, value) in items)
+        _lock.EnterWriteLock();
+        try
         {
-            var path = BuildPath(dbName, key, propertyName);
-            var version = File.Exists(path) ? GetFileVersion(path) + 1 : 1;
-            Save(path, version, value);
+            if (expectedVersion != _dbVersion) throw new Exception("Database version mismatch");
+            _dbVersion++;
+            foreach (var kv in data)
+            {
+                var path = BuildPath(dbName, kv.Key, propertyName, true);
+                var version = File.Exists(path) ? GetFileVersion(path) + 1 : 1;
+                Save(path, version, kv.Value);
+            }
+        }
+        finally
+        {
+            _lock.ExitWriteLock();
         }
     }
 
@@ -48,9 +83,11 @@ public sealed class FileStorage: IStoragePlugin
         fs.Write(value, 0, value.Length);
     }
 
-    private string BuildPath(string dbName, int key, string? propertyName)
+    private string BuildPath(string dbName, int key, string? propertyName, bool createFolder = false)
     {
-        var path = Path.Combine(_baseFolder, dbName, (key / _keyDivider).ToString(), key.ToString());
+        var folder = Path.Combine(_baseFolder, dbName, (key / _keyDivider).ToString());
+        if (createFolder && !Directory.Exists(folder)) Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, key.ToString());
         return propertyName != null ? path + "." + propertyName : path;
     }
     
