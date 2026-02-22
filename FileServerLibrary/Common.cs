@@ -12,8 +12,8 @@ public interface ICommand
 
 public interface ICryptoPlugin : IPlugin
 {
-    byte[] Encrypt(byte[]key, byte[] data);
-    byte[] Decrypt(byte[]key, byte[] data, int idx);
+    byte[] Encrypt(byte[]key, byte[] data, int extraSpace);
+    byte[] Decrypt(byte[]key, byte[] data, int idx, int length);
 }
 
 public interface IDecoderPlugin : IPlugin
@@ -29,7 +29,7 @@ public interface IStoragePlugin : IPlugin
 
 public interface IUserProviderPlugin: IPlugin
 {
-    (User, int) GetUser(byte[] data);
+    int GetUser(byte[] data, out User user);
 }
 
 public sealed record ServerConfigurationParameters(
@@ -82,6 +82,8 @@ public sealed record ServerConfigurationParameters(
 
 public class User
 {
+    public const int HashSize = 32;
+    
     public readonly string Name;
     public readonly int Id;
     public readonly byte[] Key;
@@ -92,46 +94,65 @@ public class User
         Id = id;
         Key = File.ReadAllBytes(keyFileName);
     }
+    
+    public int ValidateData(byte[] data, int encrypredDataIdx)
+    {
+        if (data.Length < HashSize+1+encrypredDataIdx)
+            throw new Exception("ValidateData: too short response");
+        var hmac = new HMACSHA256(Key);
+        var length = data.Length - HashSize;
+        var hash = hmac.ComputeHash(data, 0, length);
+        if (!hash.SequenceEqual(data.AsSpan(length, HashSize)))
+            throw new Exception("Invalid response hash");
+        return length - encrypredDataIdx;
+    }
+
+    public void AddHash(byte[] encrypted)
+    {
+        var hmac = new HMACSHA256(Key);
+        var length = encrypted.Length - HashSize;
+        hmac.ComputeHash(encrypted, 0, length).CopyTo(encrypted, length);
+    }
 }
 
 public sealed class ChaCha20CryptoPlugin: ICryptoPlugin
 {
+    public const int ExtraPayloadSize = 2 * ChaCha20.NonceLength + ChaCha20.KeyLength;
+    
     public ChaCha20CryptoPlugin(ServerConfigurationParameters parameters)
     {
     }
 
-    public byte[] Encrypt(byte[] key, byte[] data)
+    public byte[] Encrypt(byte[] key, byte[] data, int extraSpace)
     {
-        if (key.Length != 32) throw new Exception("Invalid encryption key");
-        var dataKeyAndNonce = RandomNumberGenerator.GetBytes(32+12);
-        var dataCipher = new ChaCha20(dataKeyAndNonce[..32], dataKeyAndNonce[32..]);
-        var nonce = RandomNumberGenerator.GetBytes(12);
-        var cipher = new ChaCha20(key, nonce);
-        var encryptedKeyAndNonce = cipher.Encrypt(dataKeyAndNonce, 0, 12+32);
-        var encryptedData = dataCipher.Encrypt(data, 0, data.Length);
-        var final = new byte[nonce.Length + encryptedKeyAndNonce.Length + encryptedData.Length + 32];
+        if (key.Length != ChaCha20.KeyLength) throw new Exception("Invalid encryption key");
+        var dataKeyAndNonce = RandomNumberGenerator.GetBytes(ChaCha20.KeyLength + ChaCha20.NonceLength);
+        var dataCipher = new ChaCha20(dataKeyAndNonce[..ChaCha20.KeyLength], dataKeyAndNonce[ChaCha20.KeyLength..]);
+        var nonce = RandomNumberGenerator.GetBytes(ChaCha20.NonceLength);
+
+        var final = new byte[ExtraPayloadSize + data.Length + extraSpace];
         nonce.CopyTo(final, 0);
-        encryptedKeyAndNonce.CopyTo(final, nonce.Length);
-        encryptedData.CopyTo(final, nonce.Length + encryptedKeyAndNonce.Length);
-        var hmac = new HMACSHA256(key);
-        hmac.ComputeHash(final, 0, final.Length-32).CopyTo(final, final.Length - 32);
+        
+        var cipher = new ChaCha20(key, nonce);
+        cipher.Encrypt(final, nonce.Length, dataKeyAndNonce, 0, ChaCha20.KeyLength + ChaCha20.NonceLength);
+        dataCipher.Encrypt(final, ExtraPayloadSize, data, 0, data.Length);
+
         return final;
     }
 
-    public byte[] Decrypt(byte[] key, byte[] data, int idx)
+    public byte[] Decrypt(byte[] key, byte[] data, int idx, int length)
     {
-        if (key.Length != 32) throw new Exception("Invalid encryption key");
-        if (data.Length < 32+32+12+12+1+idx)
+        if (key.Length != ChaCha20.KeyLength) throw new Exception("Invalid encryption key");
+        if (length < ExtraPayloadSize + 1)
             throw new Exception("Invalid response");
-        var hmac = new HMACSHA256(key);
-        var hash = hmac.ComputeHash(data, idx, data.Length - 32 - idx);
-        if (!hash.SequenceEqual(data.AsSpan(data.Length - 32, 32)))
-            throw new Exception("Invalid response hash");
-        var keyAndNonceOffset = 12 + idx;
+        var keyAndNonceOffset = ChaCha20.NonceLength + idx;
         var cipher = new ChaCha20(key, data[idx..keyAndNonceOffset]);
-        var decryptedKeyAndNonce = cipher.Encrypt(data, keyAndNonceOffset, 12+32);
-        cipher = new ChaCha20(decryptedKeyAndNonce[..32], decryptedKeyAndNonce[32..]);
-        var dataOffset = keyAndNonceOffset + 32 + 12;
-        return cipher.Encrypt(data, dataOffset, data.Length - dataOffset - 32);
+        var decryptedKeyAndNonce = new byte[ChaCha20.KeyLength + ChaCha20.NonceLength];
+        cipher.Encrypt(decryptedKeyAndNonce, 0, data, keyAndNonceOffset, ChaCha20.KeyLength + ChaCha20.NonceLength);
+        cipher = new ChaCha20(decryptedKeyAndNonce[..ChaCha20.KeyLength], decryptedKeyAndNonce[ChaCha20.KeyLength..]);
+        var dataOffset = keyAndNonceOffset + ChaCha20.KeyLength + ChaCha20.NonceLength;
+        var result = new byte[length - ExtraPayloadSize];
+        cipher.Encrypt(result, 0, data, dataOffset, result.Length);
+        return result;
     }
 }

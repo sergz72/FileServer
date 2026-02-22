@@ -61,8 +61,9 @@ internal class Server(ServerConfiguration configuration)
         User user;
         try
         {
-            (user, var idx) = configuration.UserProvider.GetUser(data);
-            decrypted = configuration.CryptoPlugin.Decrypt(user.Key, data, idx);
+            var idx = configuration.UserProvider.GetUser(data, out user);
+            var length = user.ValidateData(data, idx);
+            decrypted = configuration.CryptoPlugin.Decrypt(user.Key, data, idx, length);
         }
         catch (Exception e)
         {
@@ -86,8 +87,9 @@ internal class Server(ServerConfiguration configuration)
 
         try
         {
-            var encrypted = configuration.CryptoPlugin.Encrypt(user.Key, response);
+            var encrypted = configuration.CryptoPlugin.Encrypt(user.Key, response, User.HashSize);
             if (encrypted.Length > MaximumMessageSize) throw new Exception("Message is too long");
+            user.AddHash(encrypted);
             _client.Send(encrypted, encrypted.Length, ep);
         }
         catch (Exception e)
@@ -96,7 +98,7 @@ internal class Server(ServerConfiguration configuration)
         }
         Interlocked.Decrement(ref _taskCount);
     }
-
+    
     internal void Stop()
     {
         _stop = true;

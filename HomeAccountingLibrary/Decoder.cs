@@ -1,4 +1,5 @@
-﻿using FileServerLibrary;
+﻿using System.Text;
+using FileServerLibrary;
 
 namespace HomeAccountingLibrary;
 
@@ -24,26 +25,34 @@ public class HomeAccountingDecoder: IDecoderPlugin
 
     private ICommand BuildGetFileVersionCommand(byte[] data)
     {
+        var idx = GetString(data, 1, out var dbName);
         throw new NotImplementedException();
     }
 
     private ICommand BuildGetLastCommand(byte[] data)
     {
+        var idx = GetString(data, 1, out var dbName);
         throw new NotImplementedException();
     }
 
     private ICommand BuildGetCommand(byte[] data)
     {
+        var idx = GetString(data, 1, out var dbName);
         throw new NotImplementedException();
     }
     
     private ICommand BuildSetCommand(byte[] data)
     {
+        var idx = GetString(data, 1, out var dbName);
         throw new NotImplementedException();
     }
 
-    private (string, int) GetDatabaseName(byte[] data)
+    private static int GetString(byte[] data, int idx, out string s)
     {
-        throw new NotImplementedException();
+        if (idx + 2 >= data.Length) throw new ArgumentException("GetString: data is too short");
+        var length = data[idx++];
+        if (idx + length >= data.Length) throw new ArgumentException("GetString: data is too short");
+        s = Encoding.UTF8.GetString(data, idx, length);
+        return length + idx;
     }
 }

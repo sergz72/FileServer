@@ -2,6 +2,9 @@ namespace FileServerLibrary;
 
 public class ChaCha20: IDisposable
 {
+    public const int NonceLength = 12;
+    public const int KeyLength = 32;
+    
     private const int KeyStreamLengthBytes = 64;
     
     private static readonly uint[] Magic =
@@ -92,10 +95,8 @@ public class ChaCha20: IDisposable
             _state[13]++;
     }
     
-    public byte[] Encrypt(byte[] data, int offset, int length)
+    public void Encrypt(byte[] dst, int dstOffset, byte[] src, int srcOffset, int length)
     {
-        var result = new byte[length];
-        var idx = 0;
         while (length > 0)
         {
             if (_position == KeyStreamLengthBytes)
@@ -108,11 +109,10 @@ public class ChaCha20: IDisposable
             length -= l;
             while (l > 0)
             {
-                result[idx++] = (byte)(data[offset++] ^ GetKeyStreamByte());
+                dst[dstOffset++] = (byte)(src[srcOffset++] ^ GetKeyStreamByte());
                 l--;
             }
         }
-        return result;
     }
 
     public void Dispose()

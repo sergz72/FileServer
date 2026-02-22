@@ -50,11 +50,12 @@ public class HomeAccountingUserProvider: IUserProviderPlugin
             .ToDictionary(x => x.Id, x => new HomeAccountingUser(x));
     }
     
-    public (User, int) GetUser(byte[] data)
+    public int GetUser(byte[] data, out User user)
     {
         var userId = BitConverter.ToInt32(data);
-        if (!_users.TryGetValue(userId, out var user))
+        if (!_users.TryGetValue(userId, out var u))
             throw new Exception($"User {userId} not found");
-        return (user, 4);
+        user = u;
+        return 4;
     }
 }
