@@ -23,8 +23,10 @@ public interface IDecoderPlugin : IPlugin
 
 public interface IStoragePlugin : IPlugin
 {
-    byte[] Read(long key, string propertyName);
-    void Write(long key, string propertyName, byte[] data);
+    IEnumerable<(int, byte[])> Get(string dbName, int fromKey, int toKey, string? propertyName = null);
+    int GetFileVersion(string dbName, int key, string? propertyName = null);
+    byte[]? GetLast(string dbName, int key, out int factKey, string? propertyName = null);
+    void Set(string dbName, Dictionary<int, byte[]> items, string? propertyName = null);
 }
 
 public interface IUserProviderPlugin: IPlugin
@@ -57,6 +59,21 @@ public sealed record ServerConfigurationParameters(
         return element.Deserialize<T>() ?? throw new Exception($"{name} is not {typeof(T).Name}");
     }
     
+    public bool GetBoolParameterOrDefault(string name, bool defaultValue)
+    {
+        if (!PluginParameters.TryGetValue(name, out var element))
+            return defaultValue;
+        if (element.ValueKind != JsonValueKind.True && element.ValueKind != JsonValueKind.False) throw new Exception($"{name} is not boolean");
+        return element.GetBoolean();
+    }
+
+    public int GetIntParameter(string name)
+    {
+        if (!PluginParameters.TryGetValue(name, out var element))
+            throw new Exception($"parameter {name} not found");
+        if (element.ValueKind != JsonValueKind.Number) throw new Exception($"{name} is not number");
+        return element.GetInt32();
+    }
     
     public int GetIntParameterOrDefault(string name, int defaultValue)
     {
