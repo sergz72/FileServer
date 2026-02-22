@@ -104,10 +104,10 @@ internal record Configuration(ushort Port, List<string> Plugins, Dictionary<stri
             .Concat(Load(AppDomain.CurrentDomain.GetAssemblies().First(a => a.GetName().Name == "FileServerLibrary")))
             .ToDictionary();
         var parameters = new ServerConfigurationParameters(plugins, Parameters);
+        var loggerCreator = parameters.CreateInstance<ILoggerCreator>(LoggerCreator, parameters);
         var cryptoPlugin = parameters.CreateInstance<ICryptoPlugin>(CryptoPlugin, parameters);
         var decoderPlugin = parameters.CreateInstance<IDecoderPlugin>(DecoderPlugin, parameters);
-        var storagePlugin = parameters.CreateInstance<IStoragePlugin>(StoragePlugin, parameters);
-        var loggerCreator = parameters.CreateInstance<ILoggerCreator>(LoggerCreator, parameters);
+        var storagePlugin = parameters.CreateInstance<IStoragePlugin>(StoragePlugin, loggerCreator.CreateLogger("Storage"), parameters);
         var userProvider = parameters.CreateInstance<IUserProviderPlugin>(UserProvider, parameters);
         return new ServerConfiguration(Port, parameters, cryptoPlugin, decoderPlugin, storagePlugin, loggerCreator, userProvider);
     }

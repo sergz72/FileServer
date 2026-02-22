@@ -45,7 +45,7 @@ public record KeyValue(int Key, int Version, byte[] Value)
     }
 }
 
-public interface IStoragePlugin : IPlugin
+public interface IStoragePlugin : IPlugin, IDisposable
 {
     // database version and IEnumerable of KeyValue
     (int, IEnumerable<KeyValue>) Get(string dbName, int from, int to, string? propertyName = null);

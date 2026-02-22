@@ -30,6 +30,7 @@ internal class Server(ServerConfiguration configuration)
         while (_taskCount > 0)
             Thread.Sleep(100);
         _client.Close();
+        configuration.StoragePlugin.Dispose();
         _logger.Info("Server stopped");
         _stopped = true;
     }
