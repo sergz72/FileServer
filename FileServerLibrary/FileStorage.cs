@@ -1,12 +1,12 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace FileServerLibrary;
 
 internal sealed class DatabaseInfo
 {
     private readonly ReaderWriterLockSlim _lock = new();
-    private readonly Dictionary<int, Dictionary<string, KeyValue>> _toSave = new();
     
     internal int DbVersion { get; private set; } = 1;
     
@@ -14,57 +14,16 @@ internal sealed class DatabaseInfo
     internal void EnterWriteLock() => _lock.EnterWriteLock();
     internal void ExitReadLock() => _lock.ExitReadLock();
     internal void ExitWriteLock() => _lock.ExitWriteLock();
-
-    public bool TryGetValue(int key, string? propertyName, [MaybeNullWhen(false)] out KeyValue kv)
-    {
-        if (!_toSave.TryGetValue(key, out var kvMap))
-        {
-            kv = null;
-            return false;
-        }
-        return kvMap.TryGetValue(propertyName ?? "", out kv);
-    }
-
+    
     public void CheckVersionAndIncrement(int expectedVersion)
     {
         if (expectedVersion != DbVersion) throw new Exception("Database version mismatch");
         DbVersion++;
     }
-
-    public void Set(int key, string? propertyName, KeyValue kv)
-    {
-        if (_toSave.TryGetValue(key, out var kvMap))
-            kvMap[propertyName ?? ""] = kv;
-        else
-            _toSave[key] = new Dictionary<string, KeyValue> {{propertyName ?? "", kv}};
-    }
-
-    public void Save(Logger logger, string dbName, FileStorage fileStorage)
-    {
-        EnterWriteLock();
-        var keys = _toSave.Keys.ToList();
-        foreach (var key in keys)
-        {
-                var kvMap = _toSave[key];
-                var propertyNames = kvMap.Keys.ToList();
-                foreach (var propertyName in propertyNames)
-                {
-                    var kv = kvMap[propertyName];
-                    try
-                    {
-                        fileStorage.Write(dbName, kv, propertyName);
-                        kvMap.Remove(propertyName);
-                    }
-                    catch (Exception e)
-                    {
-                        logger.Error(e.Message);
-                    }
-                }
-                if (kvMap.Count == 0) _toSave.Remove(key);
-        }
-        ExitWriteLock();
-    }
 }
+
+internal record FileStorageMemoryCacheKey(string DbName, int Key, string? PropertyName);
+internal record FileStorageMemoryCacheValue(KeyValue Value, bool Dirty);
 
 public sealed class FileStorage: IStoragePlugin
 {
@@ -72,7 +31,8 @@ public sealed class FileStorage: IStoragePlugin
     private readonly int _keyDivider;
     private readonly int _writeBackInterval;
     private readonly bool _versioned;
-    private readonly ConcurrentDictionary<string, DatabaseInfo> _toSave;
+    private readonly ConcurrentDictionary<string, DatabaseInfo> _dbInfo;
+    private readonly MemoryCache _cache;
     private readonly Logger _logger;
 
     private volatile bool _stop, _stopped;
@@ -80,11 +40,13 @@ public sealed class FileStorage: IStoragePlugin
     public FileStorage(Logger logger, ServerConfigurationParameters parameters)
     {
         _logger = logger;
-        _toSave = new ConcurrentDictionary<string, DatabaseInfo>();
-        _baseFolder = parameters.GetStringParameter("baseFolder");
-        _keyDivider = parameters.GetIntParameter("keyDivider");
-        _writeBackInterval = parameters.GetIntParameterOrDefault("writeBackInterval", 0);
-        _versioned = parameters.GetBoolParameterOrDefault("versionedFileStorage", false);
+        _dbInfo = new ConcurrentDictionary<string, DatabaseInfo>();
+        _baseFolder = parameters.GetStringParameter("storageBaseFolder");
+        _keyDivider = parameters.GetIntParameter("storageKeyDivider");
+        _writeBackInterval = parameters.GetIntParameterOrDefault("storageWriteBackInterval", 0);
+        _versioned = parameters.GetBoolParameterOrDefault("versionedStorage", false);
+        var maxCacheMemory = parameters.GetIntParameterOrDefault("storageCacheMemoryLimit", 300*1024*1024);
+        _cache = new MemoryCache(new MemoryCacheOptions() { SizeLimit = maxCacheMemory });
         _stop = false;
         _stopped = false;
         if (_writeBackInterval > 0)
@@ -109,12 +71,20 @@ public sealed class FileStorage: IStoragePlugin
         }
     }
 
-    private DatabaseInfo GetDatabaseInfo(string dbName) => _toSave.GetOrAdd(dbName, _ => new DatabaseInfo());
+    private DatabaseInfo GetDatabaseInfo(string dbName) => _dbInfo.GetOrAdd(dbName, _ => new DatabaseInfo());
     
     private void WriteDirtyData()
     {
-        foreach (var (dbName, dbInfo) in _toSave)
-            dbInfo.Save(_logger, dbName, this);
+        foreach (var key in _cache.Keys.Select(k => (FileStorageMemoryCacheKey)k))
+        {
+            var item = _cache.Get<FileStorageMemoryCacheValue>(key);
+            if (item is { Dirty: true })
+            {
+                Write(key.DbName, item.Value, key.PropertyName);
+                _cache.Set(key, item with { Dirty = false },
+                    new MemoryCacheEntryOptions { Priority = CacheItemPriority.Low });
+            }
+        }
     }
 
     public (int, IEnumerable<KeyValue>) Get(string dbName, int from, int to, string? propertyName = null)
@@ -123,7 +93,20 @@ public sealed class FileStorage: IStoragePlugin
         dbInfo.EnterReadLock();
         try
         {
-            throw new NotImplementedException();
+            var cachedKeys = _cache.Keys
+                .Select(key => (FileStorageMemoryCacheKey)key)
+                .Where(key =>
+                    key.DbName == dbName && key.PropertyName == propertyName && key.Key >= from && key.Key <= to)
+                .Select(key => key.Key)
+                .ToList();
+            var fromFolder = from / _keyDivider;
+            var toFolder = to / _keyDivider;
+            var allKeys = Enumerable.Range(fromFolder, toFolder - fromFolder + 1)
+                        .SelectMany(key => GetKeys(dbName, key, propertyName))
+                        .Where(key => key >= from && key <= to)
+                        .ToHashSet();
+             allKeys.UnionWith(cachedKeys);
+             return (dbInfo.DbVersion, allKeys.OrderBy(key => key).Select(key => Get(dbName, key, propertyName).Value));
         }
         finally
         {
@@ -131,17 +114,52 @@ public sealed class FileStorage: IStoragePlugin
         }
     }
 
+    private IEnumerable<int> GetKeys(string dbName, int key, string? propertyName = null)
+    {
+        var path = GetFolderName(dbName, key);
+        return Directory.GetFiles(path)
+            .Where(fname => propertyName == null || fname.EndsWith("." + propertyName))
+            .Select(Path.GetFileNameWithoutExtension)
+            .Where(fname => fname != null)
+            .Select(fname => int.Parse(fname!));
+    }
+
+    private bool TryGet(FileStorageMemoryCacheKey cacheKey, [MaybeNullWhen(false)] out FileStorageMemoryCacheValue result, bool onlyVersion = false)
+    {
+        return TryGet(cacheKey.DbName, cacheKey.Key, cacheKey.PropertyName, out result, onlyVersion);
+    }
+    
+
+    private bool TryGet(string dbName, int key, string? propertyName, [MaybeNullWhen(false)] out FileStorageMemoryCacheValue result, bool onlyVersion = false)
+    {
+        var cacheKey = new FileStorageMemoryCacheKey(dbName, key, propertyName);
+        if (_cache.TryGetValue(cacheKey, out var value)) { result = (FileStorageMemoryCacheValue)value!; return true; }
+        var path = BuildPath(dbName, key, propertyName);
+        if (!File.Exists(path)) { result = null; return false;}
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read);
+        using var br = new BinaryReader(fs);
+        var version = _versioned ? br.ReadInt32() : 0;
+        var data = new byte[onlyVersion ? 0 : fs.Length - 4];
+        if (!onlyVersion && br.Read(data, 0, data.Length) != data.Length) throw new Exception("Can't read file data");
+        result = new FileStorageMemoryCacheValue(new KeyValue(key, version, data), false);
+        if (!onlyVersion)
+            _cache.Set(cacheKey, result);
+        return true;
+    }
+
+    private FileStorageMemoryCacheValue Get(string dbName, int key, string? propertyName, bool onlyVersion = false)
+    {
+        if (TryGet(dbName, key, propertyName, out var result, onlyVersion)) return result;
+        throw new Exception($"item {dbName} {key} {propertyName} not found");
+    }
+    
     public (int, int) GetFileVersion(string dbName, int key, string? propertyName = null)
     {
-        if (!_versioned) return (0, 0);
-        
         var dbInfo = GetDatabaseInfo(dbName);
         dbInfo.EnterReadLock();
         try
         {
-            if (dbInfo.TryGetValue(key, propertyName, out var value)) return (dbInfo.DbVersion, value.Version);
-            var path = BuildPath(dbName, key, propertyName);
-            return (dbInfo.DbVersion, GetFileVersion(path));
+            return !_versioned ? (dbInfo.DbVersion, 0) : (dbInfo.DbVersion, Get(dbName, key, propertyName, true).Value.Version);
         }
         finally
         {
@@ -155,7 +173,23 @@ public sealed class FileStorage: IStoragePlugin
         dbInfo.EnterReadLock();
         try
         {
-            throw new NotImplementedException();
+            var lastCachedKey = _cache.Keys
+                .Select(key => (FileStorageMemoryCacheKey)key)
+                .Where(key =>
+                    key.DbName == dbName && key.PropertyName == propertyName && key.Key >= from && key.Key <= to)
+                .Select(key => key.Key)
+                .OrderByDescending(key => key)
+                .FirstOrDefault(-1);
+            var fromFolder = from / _keyDivider;
+            var toFolder = to / _keyDivider;
+            var lastFsKey = Enumerable.Range(fromFolder, toFolder - fromFolder + 1)
+                .Reverse()
+                .SelectMany(key => GetKeys(dbName, key, propertyName)
+                    .Where(key2 => key2 >= from && key2 <= to)
+                    .OrderByDescending(k => k))
+                .FirstOrDefault(-1);
+            var key = Math.Max(lastCachedKey, lastFsKey);
+            return key == -1 ? (dbInfo.DbVersion, null) : (dbInfo.DbVersion, Get(dbName, key, propertyName).Value);
         }
         finally
         {
@@ -172,50 +206,24 @@ public sealed class FileStorage: IStoragePlugin
             if (_versioned)
                 dbInfo.CheckVersionAndIncrement(expectedVersion);
 
-            if (_writeBackInterval > 0)
+            foreach (var kv in data)
             {
-                foreach (var kv in data)
-                {
-                    if (dbInfo.TryGetValue(kv.Key, propertyName, out var oldValue))
-                        dbInfo.Set(kv.Key, propertyName, kv with { Version = oldValue.Version + 1 });
-                    else
-                    {
-                        var version = GetNextFileVersion(dbName, kv.Key, propertyName);
-                        dbInfo.Set(kv.Key, propertyName, kv with { Version = version });
-                    }
-                }
-                return;
+                var cacheKey = new FileStorageMemoryCacheKey(dbName, kv.Key, propertyName);
+                var exists = TryGet(cacheKey, out var oldValue, true);
+                _cache.Set(cacheKey, new FileStorageMemoryCacheValue(kv with { Version = exists ? oldValue!.Value.Version + 1 : 1 }, true),
+                    new MemoryCacheEntryOptions {Priority = _writeBackInterval <= 0 ? CacheItemPriority.Low : CacheItemPriority.NeverRemove});
+                if (_writeBackInterval <= 0)
+                    Write(dbName, kv, propertyName);
             }
 
-            Write(dbName, data, propertyName);
         }
         finally
         {
             dbInfo.ExitWriteLock();
         }
     }
-
-    private int GetNextFileVersion(string dbName, int key, string? propertyName)
-    {
-        var path = BuildPath(dbName, key, propertyName);
-        return GetNextFileVersion(path);
-    }
-
-    private int GetNextFileVersion(string path)
-    {
-        return _versioned && File.Exists(path) ? GetFileVersion(path) + 1 : 1;
-    }
     
-    private void Write(string dbName, List<KeyValue> data, string? propertyName)
-    {
-        foreach (var kv in data)
-        {
-            var path = BuildPath(dbName, kv.Key, propertyName, true);
-            Save(path, GetNextFileVersion(path), kv.Value);
-        }
-    }
-
-    internal void Write(string dbName, KeyValue kv, string? propertyName)
+    private void Write(string dbName, KeyValue kv, string? propertyName)
     {
         var path = BuildPath(dbName, kv.Key, propertyName, true);
         Save(path, kv.Version, kv.Value);
@@ -228,23 +236,17 @@ public sealed class FileStorage: IStoragePlugin
             fs.Write(BitConverter.GetBytes(version), 0, 4);
         fs.Write(value, 0, value.Length);
     }
+    
+    private string GetFolderName(string dbName, int key) => Path.Combine(_baseFolder, dbName, key.ToString());
 
     private string BuildPath(string dbName, int key, string? propertyName, bool createFolder = false)
     {
-        var folder = Path.Combine(_baseFolder, dbName, (key / _keyDivider).ToString());
+        var folder = GetFolderName(dbName, key / _keyDivider);
         if (createFolder && !Directory.Exists(folder)) Directory.CreateDirectory(folder);
         var path = Path.Combine(folder, key.ToString());
         return propertyName != null ? path + "." + propertyName : path;
     }
     
-    private static int GetFileVersion(string path)
-    {
-        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read);
-        var data = new byte[4];
-        if (fs.Read(data, 0, 4) != 4) throw new Exception("Can't read file version");
-        return BitConverter.ToInt32(data);
-    }
-
     public void Dispose()
     {
         if (_writeBackInterval <= 0) return;
