@@ -47,13 +47,12 @@ public record KeyValue(int Key, int Version, byte[] Value)
 
 public interface IStoragePlugin : IPlugin, IDisposable
 {
-    // database version and IEnumerable of KeyValue
-    (int, IEnumerable<KeyValue>) Get(string dbName, int from, int to, string? propertyName = null);
-    // database version and file version
-    (int, int) GetFileVersion(string dbName, int key, string? propertyName = null);
-    // database version and KeyValue
-    (int, KeyValue?) GetLast(string dbName, int from, int to, string? propertyName = null);
-    void Set(string dbName, int expectedVersion, List<KeyValue> data, string? propertyName = null);
+    // database info and IEnumerable of KeyValue
+    (DatabaseInfo, IEnumerable<KeyValue>) Get(string dbName, int from, int to, string? propertyName = null);
+    (DatabaseInfo, int) GetFileVersion(string dbName, int key, string? propertyName = null);
+    // database info and KeyValue
+    (DatabaseInfo, KeyValue?) GetLast(string dbName, int from, int to, string? propertyName = null);
+    DatabaseInfo Set(string dbName, int expectedVersion, List<KeyValue> data, string? propertyName = null);
 }
 
 public interface IUserProviderPlugin: IPlugin
