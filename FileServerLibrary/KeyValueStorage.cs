@@ -89,6 +89,8 @@ public sealed class KeyValueStorage: IStoragePlugin
         _writeBackTask = _writeBackInterval > 0 ? Task.Run(Loop) : null;
     }
 
+    public IKeyValueStorage GetStorageInterface() => _storageInterface;
+    
     private void Loop()
     {
         while (true)
@@ -110,15 +112,30 @@ public sealed class KeyValueStorage: IStoragePlugin
     
     private void WriteDirtyData()
     {
-        foreach (var key in _cache.Keys.Select(k => (KeyValueStorageKey)k))
+        foreach (var dbInfo in _dbInfo.Values)
+            dbInfo.EnterReadLock();
+        try
         {
-            var item = _cache.Get<KeyValueStorageCacheValue>(key);
-            if (item is { Dirty: true })
+            foreach (var key in _cache.Keys.Select(k => (KeyValueStorageKey)k))
             {
-                Write(key, item.Value);
-                _cache.Set(key, item with { Dirty = false },
-                    new MemoryCacheEntryOptions { Priority = CacheItemPriority.Low });
+                var item = _cache.Get<KeyValueStorageCacheValue>(key);
+                if (item is { Dirty: true })
+                {
+                    Write(key, item.Value);
+                    _cache.Set(key, item with { Dirty = false },
+                        new MemoryCacheEntryOptions
+                            { Priority = CacheItemPriority.Low, Size = item.Value.Value.Length });
+                }
             }
+        }
+        catch (Exception e)
+        {
+            _logger.Error(e.Message);
+        }
+        finally
+        {
+            foreach (var dbInfo in _dbInfo.Values)
+                dbInfo.ExitReadLock();
         }
     }
 
