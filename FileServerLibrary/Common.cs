@@ -53,6 +53,7 @@ public interface IStoragePlugin : IPlugin, IDisposable
     // database info and KeyValue
     (DatabaseInfo, KeyValue?) GetLast(string dbName, int from, int to, string? propertyName = null);
     DatabaseInfo Set(string dbName, int expectedVersion, List<KeyValue> data, string? propertyName = null);
+    DatabaseInfo AddOrUpdate(string dbName, int key, string? propertyName, Func<byte[]> addFunc, Func<byte[], byte[]> updateFunc);
 }
 
 public interface IUserProviderPlugin: IPlugin

@@ -247,18 +247,7 @@ public sealed class KeyValueStorage: IStoragePlugin
             foreach (var kv in data)
             {
                 var cacheKey = new KeyValueStorageKey(dbName, kv.Key, propertyName);
-                var exists = TryGet(cacheKey, out var oldValue);
-                var newKv = kv with { Version = _versioned ? (exists ? oldValue!.Value.Version + 1 : 1) : 0 };
-                _cache.Set(cacheKey,
-                    new KeyValueStorageCacheValue(newKv, true),
-                    new MemoryCacheEntryOptions
-                    {
-                        Priority = _writeBackInterval <= 0 ? CacheItemPriority.Low : CacheItemPriority.NeverRemove,
-                        Size = newKv.Value.Length
-                    });
-                dbInfo.AddKey(cacheKey);
-                if (_writeBackInterval <= 0)
-                    Write(cacheKey, newKv);
+                Set(dbInfo, cacheKey, kv);
             }
 
             return dbInfo;
@@ -269,7 +258,42 @@ public sealed class KeyValueStorage: IStoragePlugin
             throw;
         }
     }
-    
+
+    private void Set(DatabaseInfo dbInfo, KeyValueStorageKey cacheKey, KeyValue kv)
+    {
+        var exists = TryGet(cacheKey, out var oldValue);
+        var newKv = kv with { Version = _versioned ? (exists ? oldValue!.Value.Version + 1 : 1) : 0 };
+        _cache.Set(cacheKey,
+            new KeyValueStorageCacheValue(newKv, true),
+            new MemoryCacheEntryOptions
+            {
+                Priority = _writeBackInterval <= 0 ? CacheItemPriority.Low : CacheItemPriority.NeverRemove,
+                Size = newKv.Value.Length
+            });
+        dbInfo.AddKey(cacheKey);
+        if (_writeBackInterval <= 0)
+            Write(cacheKey, newKv);
+    }
+
+    public DatabaseInfo AddOrUpdate(string dbName, int key, string? propertyName, Func<byte[]> addFunc, Func<byte[], byte[]> updateFunc)
+    {
+        var dbInfo = GetDatabaseInfo(dbName);
+        dbInfo.EnterWriteLock();
+        try
+        {
+            var cacheKey = new KeyValueStorageKey(dbName, key, propertyName);
+            var newData = TryGet(cacheKey, out var oldValue) ? updateFunc(oldValue.Value.Value) : addFunc();
+            Set(dbInfo, cacheKey, new KeyValue(key, 0, newData));
+            
+            return dbInfo;
+        }
+        catch
+        {
+            dbInfo.ExitWriteLock();
+            throw;
+        }
+    }
+
     public void Dispose()
     {
         _stop = true;

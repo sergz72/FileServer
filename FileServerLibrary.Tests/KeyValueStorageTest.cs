@@ -129,7 +129,7 @@ public class KeyValueStorageTest
         {
             Interlocked.Increment(ref _numOperations);
             var from = GetRandom();
-            switch (RandomNumberGenerator.GetInt32(0, versioned ? 4 : 3))
+            switch (RandomNumberGenerator.GetInt32(0, versioned ? 6 : 5))
             {
                 //Get
                 case 0:
@@ -142,10 +142,43 @@ public class KeyValueStorageTest
                 case 2:
                     Set(GetRandomDbName(), from, from + GetRandom(10), null, versioned);
                     break;
+                case 3:
+                    AddOrUpdate(GetRandomDbName(), from, null, versioned);
+                    break;
+                case 4:
+                    AddOrUpdate(GetRandomDbName(), null, null, versioned);
+                    break;
                 default:
                     GetFileVersionCheck();
                     break;
             }
+        }
+    }
+
+    private void AddOrUpdate(string dbName, int? key, string? propertyName, bool versioned)
+    {
+        if (key == null)
+        {
+            if (_items.IsEmpty) return;
+            _writeLock.Enter();
+            var idx = GetRandom(_items.Count);
+            key = _items.ElementAt(idx).Key.Key;
+        }
+        else
+            _writeLock.Enter();
+
+        try
+        {
+            var newData = RandomNumberGenerator.GetBytes(GetRandom(100)); 
+            var dbInfo = _storage!.AddOrUpdate(dbName, (int)key, propertyName, () => newData, _ => newData);
+            var kv = new KeyValue((int)key, versioned ? 1 : 0, newData);
+            _items.AddOrUpdate(new KeyValueStorageKey(dbName, (int)key, propertyName), kv,
+                (_, value) => versioned ? kv with { Version = value.Version + 1 } : kv);
+            dbInfo.ExitWriteLock();
+        }
+        finally
+        {
+            _writeLock.Exit();
         }
     }
 
@@ -172,7 +205,7 @@ public class KeyValueStorageTest
     private void Set(string dbName, int from, int to, string? propertyName, bool versioned)
     {
         var toSet = Enumerable.Range(from, to - from + 1)
-            .Select(i => new KeyValue(i, versioned ? 1 : 0, new byte[GetRandom(100) + 1]))
+            .Select(i => new KeyValue(i, versioned ? 1 : 0, RandomNumberGenerator.GetBytes(GetRandom(100))))
             .ToList();
         _writeLock.Enter();
         try
