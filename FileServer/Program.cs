@@ -1,6 +1,5 @@
 ﻿using System.Reflection;
 using System.Text.Json;
-using FileServer;
 using FileServerLibrary;
 
 State state = new();
@@ -18,11 +17,11 @@ catch (Exception e)
     return;
 }
 
-Server server;
+List<IServerPlugin> servers;
 
 try
 {
-    server = new Server(configuration.Validate());
+    servers = configuration.Validate();
 }
 catch (Exception e)
 {
@@ -33,16 +32,20 @@ catch (Exception e)
 Console.CancelKeyPress += (sender, eventArgs) =>
 {
     eventArgs.Cancel = true;
-    server.Stop();
+    foreach (var server in servers)
+        server.Stop();
 };
 
 try
 {
-    server.Start();
+    foreach (var server in servers)
+        server.Start();
 }
 catch (Exception e)
 {
     Console.WriteLine(e.InnerException != null ? e.InnerException.Message : e.Message);
+    foreach (var server in servers)
+        server.Stop();
 }
 
 return;
@@ -55,7 +58,6 @@ void Usage()
 
 internal sealed class State
 {
-    private ushort _port;
     private string _configFileName = "configuration.json";
     private string _nextParameter = "";
     
@@ -65,7 +67,6 @@ internal sealed class State
         {
             switch (_nextParameter)
             {
-                case "p": _port = ushort.Parse(arg); break;
                 case "c": _configFileName = arg; break;
                 default: throw new Exception($"Unknown parameter {_nextParameter}");
             }
@@ -82,34 +83,26 @@ internal sealed class State
     {
         if (_nextParameter != "") throw new Exception($"Missing value for parameter {_nextParameter}");
         var jsonString = File.ReadAllText(_configFileName);
-        var config = JsonSerializer.Deserialize<Configuration>(jsonString) ??
+        return JsonSerializer.Deserialize<Configuration>(jsonString) ??
                                 throw new Exception("Invalid settings file");
-        var configuration = _port == 0 ? config : config with { Port = _port };
-        return configuration;
     }
 }
 
-internal record Configuration(ushort Port, List<string> Plugins, Dictionary<string, JsonElement> Parameters,
-    string CryptoPlugin, string DecoderPlugin, string StoragePlugin, string LoggerCreator, string UserProvider)
+internal record Configuration(List<string> Plugins, Dictionary<string, JsonElement> Parameters,
+    List<ServerConfiguration> Servers, string StoragePlugin, string LoggerCreator)
 {
-    internal ServerConfiguration Validate()
+    internal List<IServerPlugin> Validate()
     {
-        if (Port == 0) throw new Exception("Port is not set");
-        if (CryptoPlugin == "") throw new Exception("Crypto plugin is not set");
-        if (DecoderPlugin == "") throw new Exception("Decoder plugin is not set");
+        if (Servers.Count == 0) throw new Exception("No servers defined");
         if (StoragePlugin == "") throw new Exception("Storage plugin is not set");
         if (LoggerCreator == "") throw new Exception("Logger creator plugin is not set");
-        if (UserProvider == "") throw new Exception("User provider plugin is not set");
         var plugins = Plugins.SelectMany(assemblyFileName => Load(Assembly.LoadFile(Path.GetFullPath(assemblyFileName))))
             .Concat(Load(AppDomain.CurrentDomain.GetAssemblies().First(a => a.GetName().Name == "FileServerLibrary")))
             .ToDictionary();
         var parameters = new ServerConfigurationParameters(plugins, Parameters);
         var loggerCreator = parameters.CreateInstance<ILoggerCreator>(LoggerCreator, parameters);
-        var cryptoPlugin = parameters.CreateInstance<ICryptoPlugin>(CryptoPlugin, parameters);
-        var decoderPlugin = parameters.CreateInstance<IDecoderPlugin>(DecoderPlugin, parameters);
         var storagePlugin = parameters.CreateInstance<IStoragePlugin>(StoragePlugin, loggerCreator.CreateLogger("Storage"), parameters);
-        var userProvider = parameters.CreateInstance<IUserProviderPlugin>(UserProvider, parameters);
-        return new ServerConfiguration(Port, parameters, cryptoPlugin, decoderPlugin, storagePlugin, loggerCreator, userProvider);
+        return Servers.Select(server => server.Validate(parameters, storagePlugin, loggerCreator)).ToList();
     }
     
     private static List<(string, Type)> Load(Assembly assembly)
@@ -123,9 +116,29 @@ internal record Configuration(ushort Port, List<string> Plugins, Dictionary<stri
 
 internal record ServerConfiguration(
     ushort Port,
-    ServerConfigurationParameters Parameters,
-    ICryptoPlugin CryptoPlugin,
-    IDecoderPlugin DecoderPlugin,
-    IStoragePlugin StoragePlugin,
-    ILoggerCreator LoggerCreator,
-    IUserProviderPlugin UserProvider);
+    string Name,
+    string Plugin,
+    string Handler,
+    string CryptoPlugin,
+    string DecoderPlugin,
+    string UserProvider
+)
+{
+    public IServerPlugin Validate(ServerConfigurationParameters parameters, IStoragePlugin storagePlugin, ILoggerCreator loggerCreator)
+    {
+        if (Port == 0) throw new Exception("Port is not set");
+        if (Name == "") throw new Exception("Name is not set");
+        if (Plugin == "") throw new Exception("Plugin is not set");
+        if (Handler == "") throw new Exception("Handler is not set");
+        if (CryptoPlugin == "") throw new Exception("Crypto plugin is not set");
+        if (DecoderPlugin == "") throw new Exception("Decoder plugin is not set");
+        if (UserProvider == "") throw new Exception("User provider plugin is not set");
+        var cryptoPlugin = parameters.CreateInstance<ICryptoPlugin>(CryptoPlugin, parameters);
+        var decoderPlugin = parameters.CreateInstance<IDecoderPlugin>(DecoderPlugin, parameters);
+        var userProvider = parameters.CreateInstance<IUserProviderPlugin>(UserProvider, parameters);
+        var serverParameters = new ServerParameters(Port, Name, Handler, parameters, cryptoPlugin, decoderPlugin, userProvider,
+                                                        storagePlugin, loggerCreator);
+        return parameters.CreateInstance<IServerPlugin>(Plugin, serverParameters);
+    }
+}
+

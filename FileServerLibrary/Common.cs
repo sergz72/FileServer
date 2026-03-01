@@ -1,9 +1,35 @@
-﻿using System.Security.Cryptography;
+﻿using System.Net;
+using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text.Json;
 
 namespace FileServerLibrary;
 
 public interface IPlugin;
+
+public record ServerParameters(
+    ushort Port,
+    string Name,
+    string Handler,
+    ServerConfigurationParameters Parameters,
+    ICryptoPlugin CryptoPlugin,
+    IDecoderPlugin DecoderPlugin,
+    IUserProviderPlugin UserProvider,
+    IStoragePlugin StoragePlugin,
+    ILoggerCreator LoggerCreator
+);
+
+public interface IServerPlugin : IPlugin
+{
+    void Start();
+    void Stop();
+}
+
+public interface IHandlerPlugin : IPlugin
+{
+    void Handle(byte[] data, IPEndPoint ep);
+    void Handle(TcpClient client);
+}
 
 public interface ICommand
 {

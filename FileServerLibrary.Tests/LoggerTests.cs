@@ -9,7 +9,7 @@ public class LoggerTests
 {
     private class TestLogger(DateTime date, string prefix, LogLevel logLevel) : Logger(prefix, logLevel)
     {
-        internal string Message { get; private set;}
+        internal string Message { get; private set;} = "";
         
         protected override void Log(LogLevel level, string message)
         { 
