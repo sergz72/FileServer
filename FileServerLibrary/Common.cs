@@ -226,3 +226,40 @@ public sealed class ChaCha20CryptoPlugin: ICryptoPlugin
         return result;
     }
 }
+
+public class DatabaseInfo
+{
+    private readonly ReaderWriterLockSlim _lock = new();
+    
+    public readonly string DbName;
+    
+    public int DbVersion { get; private set; } = 1;
+    
+    internal void EnterReadLock() => _lock.EnterReadLock();
+    internal void EnterWriteLock() => _lock.EnterWriteLock();
+    public void ExitReadLock() => _lock.ExitReadLock();
+    public void ExitWriteLock() => _lock.ExitWriteLock();
+
+    public DatabaseInfo(string dbName)
+    {
+        DbName = dbName;
+    }
+    
+    internal void CheckVersionAndIncrement(int expectedVersion)
+    {
+        if (expectedVersion != DbVersion) throw new Exception("Database version mismatch");
+        DbVersion++;
+    }
+
+    public int GetVersionAndUnlock()
+    {
+        var version = DbVersion;
+        ExitReadLock();
+        return version;
+    }
+    
+    public void IncrementVersion()
+    {
+        DbVersion++;
+    }
+}
