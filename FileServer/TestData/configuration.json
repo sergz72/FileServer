@@ -3,8 +3,8 @@
     {
       "Name": "UdpServer",
       "Port": 11111,
-      "Plugin": "UdpServerPlugin",
-      "Handler": "UserHandlerPlugin",
+      "Plugin": "UdpServer",
+      "Handler": "UserHandler",
       "CryptoPlugin": "ChaCha20CryptoPlugin",
       "DecoderPlugin": "HomeAccountingDecoder",
       "UserProvider": "HomeAccountingUserProvider"
@@ -14,9 +14,10 @@
     "../HomeAccountingLibrary/bin/Debug/net10.0/HomeAccountingLibrary.dll"
   ],
   "Parameters": {
+    "storageInterface": "FileStorage",
+    "storageBaseFolder": "/mnt/ramdisk",
+    "storageKeyDivider": 10000,
     "logFileName": "log.txt",
-    "baseFolder": "TestData/data",
-    "keyDivider": 10000,
     "Users": [
       {
         "Id": 11223344,
@@ -29,6 +30,6 @@
       }
     ]
   },
-  "StoragePlugin": "HomeAccountingFileStorage",
+  "StoragePlugin": "KeyValueStorage",
   "LoggerCreator": "ConsoleLoggerCreator"
 }

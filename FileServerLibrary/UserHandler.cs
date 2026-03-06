@@ -4,11 +4,22 @@ using System.Text;
 
 namespace FileServerLibrary;
 
-public class UserHandler(UdpServer server, ServerParameters parameters): IHandlerPlugin
+public class UserHandler: IHandlerPlugin
 {
+    private readonly UdpServer _server;
+    private readonly ServerParameters _parameters;
+    
+    UserHandler(UdpServer server, ServerParameters parameters)
+    {
+        if (parameters.CryptoPlugin == null) throw new Exception("Crypto plugin is not set");
+        if (parameters.UserProvider == null) throw new Exception("User provider plugin is not set");
+        _server = server;
+        _parameters = parameters;
+    }
+        
     public void Handle(byte[] data, IPEndPoint ep)
     {
-        var logger = parameters.LoggerCreator.CreateLogger(ep.ToString());
+        var logger = _parameters.LoggerCreator.CreateLogger(ep.ToString());
         
         logger.Debug("New connection");
 
@@ -16,22 +27,22 @@ public class UserHandler(UdpServer server, ServerParameters parameters): IHandle
         User user;
         try
         {
-            var idx = parameters.UserProvider.GetUser(data, out user);
+            var idx = _parameters.UserProvider!.GetUser(data, out user);
             var length = user.ValidateData(data, idx);
-            decrypted = parameters.CryptoPlugin.Decrypt(user.Key, data, idx, length);
+            decrypted = _parameters.CryptoPlugin!.Decrypt(user.Key, data, idx, length);
         }
         catch (Exception e)
         {
             logger.Error(e.Message);
-            server.DecrementTaskCount();
+            _server.DecrementTaskCount();
             return;
         }
         
         byte[] response;
         try
         {
-            var command = parameters.DecoderPlugin.Decode(logger, decrypted);
-            var outData = command.Execute(user, parameters.StoragePlugin, logger);
+            var command = _parameters.DecoderPlugin.Decode(logger, decrypted);
+            var outData = command.Execute(user, _parameters.StoragePlugin, logger);
             response = BuildOkResponse(outData);
         }
         catch (Exception e)
@@ -42,16 +53,16 @@ public class UserHandler(UdpServer server, ServerParameters parameters): IHandle
 
         try
         {
-            var encrypted = parameters.CryptoPlugin.Encrypt(user.Key, response, User.HashSize);
+            var encrypted = _parameters.CryptoPlugin.Encrypt(user.Key, response, User.HashSize);
             if (encrypted.Length > UdpServer.MaximumMessageSize) throw new Exception("Message is too long");
             user.AddHash(encrypted);
-            server.Send(encrypted, ep);
+            _server.Send(encrypted, ep);
         }
         catch (Exception e)
         {
             logger.Error(e.Message);
         }
-        server.DecrementTaskCount();
+        _server.DecrementTaskCount();
     }
 
     private static byte[] BuildOkResponse(byte[] outData)

@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 
 namespace FileServerLibrary;
 
-public interface IKeyValueStorage
+public interface IKeyValueStorage: IPlugin
 {
     byte[]? Get(KeyValueStorageKey key);
     void Set(KeyValueStorageKey key, byte[] value);

@@ -12,9 +12,9 @@ public record ServerParameters(
     string Name,
     string Handler,
     ServerConfigurationParameters Parameters,
-    ICryptoPlugin CryptoPlugin,
+    ICryptoPlugin? CryptoPlugin,
     IDecoderPlugin DecoderPlugin,
-    IUserProviderPlugin UserProvider,
+    IUserProviderPlugin? UserProvider,
     IStoragePlugin StoragePlugin,
     ILoggerCreator LoggerCreator
 );
