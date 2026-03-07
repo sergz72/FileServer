@@ -256,7 +256,7 @@ public class KeyValueStorageTest
             (dbInfo, var result) = _storage!.GetLast(dbName, from, to, propertyName);
             var expected = _items
                 .Where(kv =>
-                    kv.Key.DbName == dbName && kv.Key.Key >= from && kv.Key.Key < to &&
+                    kv.Key.DbName == dbName && kv.Key.Key >= from && kv.Key.Key <= to &&
                     kv.Key.PropertyName == propertyName)
                 .Select(kv => kv.Value)
                 .OrderByDescending(kv => kv.Key)

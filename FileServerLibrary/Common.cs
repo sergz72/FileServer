@@ -69,6 +69,22 @@ public record KeyValue(int Key, int Version, byte[] Value)
         }
         return result;
     }
+
+    public byte[] BuildData(bool versioned)
+    {
+        if (!versioned)
+            return Value;
+        var data = new byte[Value.Length + 4];
+        BitConverter.GetBytes(Version).CopyTo(data, 0);
+        Value.CopyTo(data, 4);
+        return data;
+    }
+
+    public static KeyValue ReadData(int key, byte[] data, bool versioned)
+    {
+        var version = versioned ? BitConverter.ToInt32(data, 0) : 0;
+        return new KeyValue(key, version, versioned ? data[4..] : data);
+    }
 }
 
 public interface IStoragePlugin : IPlugin, IDisposable

@@ -3,13 +3,12 @@ using Microsoft.Extensions.Caching.Memory;
 
 namespace FileServerLibrary;
 
-public sealed class KeyValueDatabaseInfo(string dbName, HashSet<KeyValueStorageShortKey> existingKeys): DatabaseInfo(dbName)
+public sealed class KeyValueDatabaseInfo(string dbName, SortedSet<KeyValueStorageShortKey> existingKeys): DatabaseInfo(dbName)
 {
     public IEnumerable<KeyValueStorageShortKey> GetKeys(int from, int to, string? propertyName = null)
     {
-        return existingKeys
-            .Where(key => key.Key >= from && key.Key <= to && key.PropertyName == propertyName)
-            .OrderBy(key => key.Key);
+        return existingKeys.GetViewBetween(new KeyValueStorageShortKey(from, propertyName), new KeyValueStorageShortKey(to, propertyName))
+            .Where(key => key.PropertyName == propertyName);
     }
 
     public void AddKey(KeyValueStorageKey cacheKey)
@@ -33,7 +32,7 @@ public sealed class KeyValueStorage: GenericKeyValueStorage<KeyValueDatabaseInfo
     protected override KeyValueDatabaseInfo CreateDatabaseInfo(string dbName,
         IEnumerable<KeyValueStorageShortKey> existingKeys)
     {
-        return new KeyValueDatabaseInfo(dbName, existingKeys.ToHashSet());
+        return new KeyValueDatabaseInfo(dbName, new SortedSet<KeyValueStorageShortKey>(existingKeys));
     }
     
     protected override void WriteDirtyData()

@@ -11,7 +11,15 @@ public interface IKeyValueStorage: IPlugin
 }
 
 public record KeyValueStorageKey(string DbName, int Key, string? PropertyName);
-public record KeyValueStorageShortKey(int Key, string? PropertyName);
+public record KeyValueStorageShortKey(int Key, string? PropertyName) : IComparable<KeyValueStorageShortKey>
+{
+    public int CompareTo(KeyValueStorageShortKey? other)
+    {
+        if (other == null) return 1;
+        if (Key == other.Key) return string.Compare(PropertyName, other.PropertyName, StringComparison.Ordinal);
+        return Key - other.Key;
+    }
+}
 
 public abstract class GenericKeyValueStorage<T>: IStoragePlugin where T: DatabaseInfo
 {
