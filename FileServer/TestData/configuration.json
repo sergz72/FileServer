@@ -17,6 +17,7 @@
     "storageInterface": "FileStorage",
     "storageBaseFolder": "/mnt/ramdisk",
     "storageKeyDivider": 10000,
+    "storageNumDays": 7000,
     "logFileName": "log.txt",
     "Users": [
       {
