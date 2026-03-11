@@ -38,15 +38,13 @@ internal sealed class TimeSeriesEntryValue
 
 internal sealed class TimeSeriesEntry
 {
-    internal readonly Dictionary<string, TimeSeriesEntryValue?> Values;
+    internal Dictionary<string, TimeSeriesEntryValue?> Values { get; private set; }
     internal readonly int Date;
 
-    internal TimeSeriesEntry(int date, HashSet<string> values)
+    internal TimeSeriesEntry(int date)
     {
         Date = date;
-        Values = values
-            .Select<string, (string, TimeSeriesEntryValue?)>(v => (v, null))
-            .ToDictionary();
+        Values = [];
     }
 
     internal KeyValue? Get(string dbName, bool versioned, IKeyValueStorage storageInterface, string? propertyName,
@@ -62,6 +60,13 @@ internal sealed class TimeSeriesEntry
         sizeDifference += kv.Value.Length;
         Values[pName] = new TimeSeriesEntryValue(kv, lru, this, pName);
         return kv;
+    }
+
+    public void SetValues(HashSet<string> values)
+    {
+        Values = values
+            .Select<string, (string, TimeSeriesEntryValue?)>(v => (v, null))
+            .ToDictionary();
     }
 }
 
@@ -79,7 +84,7 @@ public sealed class TimeSeriesDatabaseParameters
     internal Logger StorageLogger { get; private set; } = null!;
     internal int NumEntries { get; private set; }
     
-    private int _minDay;
+    internal readonly int MinDay;
 
     public TimeSeriesDatabaseParameters(TimeSeriesDatabaseParametersRecord parameters, string dbName,
         TimeSeriesDatabaseParametersRecord? defaultParameters, IKeyValueStorage storageInterface, Logger storageLogger,
@@ -102,14 +107,14 @@ public sealed class TimeSeriesDatabaseParameters
         if (MaximumMemoryUsage == 0) throw new Exception($"{dbName}: MaximumMemoryUsage is not set");
         if (MinimumDate == 0) throw new Exception($"{dbName}: MinimumDate is not set");
         if (NumDaysFromNow == 0) throw new Exception($"{dbName}: NumDaysFromNow is not set");
-        _minDay = DateToDayNumber(MinimumDate);
-        NumEntries = DateOnly.FromDateTime(DateTime.UtcNow).DayNumber - _minDay + NumDaysFromNow;
+        MinDay = DateToDayNumber(MinimumDate);
+        NumEntries = DateOnly.FromDateTime(DateTime.UtcNow).DayNumber - MinDay + NumDaysFromNow;
     }
     
     internal int DateToKey(int date)
     {
         var day = DateToDayNumber(date);
-        return day > _minDay ? day - _minDay : 0;
+        return day > MinDay ? day - MinDay : 0;
     }
     
     public static int DateToDayNumber(int date) =>
@@ -127,13 +132,25 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
     
     private int _totalSize;
     
+    public static int BuildDate(DateOnly date)
+    {
+        return date.Year * 10000 + date.Month * 100 + date.Day;
+    }
+    
+    
     internal TimeSeriesDatabaseInfo(TimeSeriesDatabaseParameters timeSeriesDatabaseParameters,
         IEnumerable<KeyValueStorageShortKey> existingKeys): base(timeSeriesDatabaseParameters.DbName)
     {
         _parameters = timeSeriesDatabaseParameters;
         _entries = new TimeSeriesEntry[_parameters.NumEntries];
+        var date = DateOnly.FromDayNumber(_parameters.MinDay);
+        for (var i = 0; i < _parameters.NumEntries; i++)
+        {
+            _entries[i] = new TimeSeriesEntry(BuildDate(date));
+            date = date.AddDays(1);
+        }
         foreach (var g in existingKeys.GroupBy(k => k.Key))
-            _entries[_parameters.DateToKey(g.Key)] = new TimeSeriesEntry(g.Key, g
+            _entries[_parameters.DateToKey(g.Key)].SetValues(g
                 .Select(k => k.PropertyName ?? "")
                 .ToHashSet());
         _dirtyKeys = [];

@@ -14,13 +14,8 @@ public sealed class TimeSeriesStorageTest(): GenericKeyValueStorageTest<TimeSeri
 {
     private const int MinDate = 20120101;
     private static readonly DateOnly MaxDate = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(NumDaysFromNow);
-    private static readonly int MaxIntDate = BuildDate(MaxDate);
+    private static readonly int MaxIntDate = TimeSeriesDatabaseInfo.BuildDate(MaxDate);
     private const int NumDaysFromNow = 3650;
-
-    private static int BuildDate(DateOnly date)
-    {
-        return date.Year * 10000 + date.Month * 100 + date.Day;
-    }
     
     [TearDown]
     public void TearDown()
@@ -92,7 +87,7 @@ public sealed class TimeSeriesStorageTest(): GenericKeyValueStorageTest<TimeSeri
     {
         var days = RandomNumberGenerator.GetInt32(MinKey, MaxKey);
         var date = DateOnly.FromDayNumber(days);
-        return BuildDate(date);
+        return TimeSeriesDatabaseInfo.BuildDate(date);
     }
 
     protected override int AddToKey(int date, int value)
@@ -100,7 +95,7 @@ public sealed class TimeSeriesStorageTest(): GenericKeyValueStorageTest<TimeSeri
         var newDate = new DateOnly(date / 10000, (date / 100) % 100, date % 100).AddDays(value);
         if (newDate > MaxDate)
             return MaxIntDate;
-        return BuildDate(newDate);
+        return TimeSeriesDatabaseInfo.BuildDate(newDate);
     }
 
     protected override IEnumerable<int> GetKeys(int from, int to)
@@ -109,7 +104,7 @@ public sealed class TimeSeriesStorageTest(): GenericKeyValueStorageTest<TimeSeri
         var fromDate = new DateOnly(from / 10000, (from / 100) % 100, from % 100);
         while (fromDate <= toDate)
         {
-            yield return BuildDate(fromDate);
+            yield return TimeSeriesDatabaseInfo.BuildDate(fromDate);
             fromDate = fromDate.AddDays(1);
         }
     }
