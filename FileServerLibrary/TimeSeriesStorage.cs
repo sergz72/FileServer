@@ -1,37 +1,36 @@
+using System.Diagnostics;
+
 namespace FileServerLibrary;
 
 internal sealed class TimeSeriesEntryValue
 {
+    private readonly LinkedListNode<LruItem> _node;
+
     internal KeyValue Value { get; private set; }
-    private long _lastAccessTime;
     
-    internal TimeSeriesEntryValue(KeyValue value, SortedDictionary<long, LruItem> lru, TimeSeriesEntry entry,
+    internal TimeSeriesEntryValue(KeyValue value, Lru<LruItem> lru, TimeSeriesEntry entry,
         string propertyName)
     {
         Value = value;
-        _lastAccessTime = DateTime.UtcNow.Ticks;
-        lru.Add(_lastAccessTime, new LruItem(entry, this, propertyName));
+        _node = lru.Add(new LruItem(entry, this, propertyName));
     }
 
-    public int SetData(byte[] newData, bool versioned, SortedDictionary<long, LruItem> lru, TimeSeriesEntry entry,
-        string propertyName)
+    public int SetData(byte[] newData, bool versioned, Lru<LruItem> lru)
     {
-        UpdateLru(lru, entry, propertyName);
+        UpdateLru(lru);
         var difference = newData.Length - Value.Value.Length;
         Value = new KeyValue(Value.Key, versioned ? Value.Version + 1 : 0, newData);
         return difference;
     }
 
-    private void UpdateLru(SortedDictionary<long, LruItem> lru, TimeSeriesEntry entry, string propertyName)
+    private void UpdateLru(Lru<LruItem> lru)
     {
-        lru.Remove(_lastAccessTime);
-        _lastAccessTime = DateTime.UtcNow.Ticks;
-        lru.Add(_lastAccessTime, new LruItem(entry, this, propertyName));
+        lru.ToTop(_node);
     }
 
-    internal KeyValue GetValue(SortedDictionary<long, LruItem> lru, TimeSeriesEntry entry, string propertyName)
+    internal KeyValue GetValue(Lru<LruItem> lru)
     {
-        UpdateLru(lru, entry, propertyName);
+        UpdateLru(lru);
         return Value;
     }
 }
@@ -48,12 +47,12 @@ internal sealed class TimeSeriesEntry
     }
 
     internal KeyValue? Get(string dbName, bool versioned, IKeyValueStorage storageInterface, string? propertyName,
-        SortedDictionary<long, LruItem> lru, ref int sizeDifference)
+        Lru<LruItem> lru, ref int sizeDifference)
     {
         var pName = propertyName ?? ""; 
         if (!Values.TryGetValue(pName, out var value)) return null;
         if (value != null)
-            return value.GetValue(lru, this, pName);
+            return value.GetValue(lru);
         var data = storageInterface.Get(new KeyValueStorageKey(dbName, Date, propertyName));
         if (data == null) throw new Exception($"item {dbName} {Date} {propertyName} not found");
         var kv = KeyValue.ReadData(Date, data, versioned);
@@ -108,7 +107,7 @@ public sealed class TimeSeriesDatabaseParameters
         if (MinimumDate == 0) throw new Exception($"{dbName}: MinimumDate is not set");
         if (NumDaysFromNow == 0) throw new Exception($"{dbName}: NumDaysFromNow is not set");
         MinDay = DateToDayNumber(MinimumDate);
-        NumEntries = DateOnly.FromDateTime(DateTime.UtcNow).DayNumber - MinDay + NumDaysFromNow;
+        NumEntries = DateOnly.FromDateTime(DateTime.UtcNow).DayNumber - MinDay + NumDaysFromNow + 1;
     }
     
     internal int DateToKey(int date)
@@ -123,12 +122,59 @@ public sealed class TimeSeriesDatabaseParameters
 
 internal record LruItem(TimeSeriesEntry Entry, TimeSeriesEntryValue Value, string PropertyName);
 
+public sealed class Lru<T>
+{
+    private readonly LinkedList<T> _lru = [];
+    private readonly Lock _lock = new();
+
+    public LinkedListNode<T> Add(T item)
+    {
+        Lock();
+        var node = _lru.AddFirst(item);
+        Unlock();
+        return node;
+    }
+
+    public void ToTop(LinkedListNode<T> node)
+    {
+        Lock();
+        _lru.Remove(node);
+        _lru.AddFirst(node);
+        Unlock();
+    }
+
+    public void Lock()
+    {
+        _lock.Enter();
+    }
+
+    public void Unlock()
+    {
+        _lock.Exit();
+    }
+
+    public void Remove(LinkedListNode<T> item)
+    {
+        _lru.Remove(item);
+    }
+
+    public void ReverseForEach(Func<LinkedListNode<T>, bool> func)
+    {
+        var item = _lru.Last;
+        while (item != null)
+        {
+            if (func(item)) return;
+            item = item.Previous;
+        }   
+    }
+}
+
 public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
 {
     private readonly TimeSeriesEntry[] _entries;
     private readonly HashSet<KeyValueStorageShortKey> _dirtyKeys;
     private readonly TimeSeriesDatabaseParameters _parameters;
-    private readonly SortedDictionary<long, LruItem> _lru;
+    private readonly Lru<LruItem> _lru;
     
     private int _totalSize;
     
@@ -155,7 +201,7 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
                 .ToHashSet());
         _dirtyKeys = [];
         _totalSize = 0;
-        _lru = new SortedDictionary<long, LruItem>();
+        _lru = new Lru<LruItem>();
     }
     
     internal void WriteDirtyData()
@@ -168,7 +214,7 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
                 var entry = _entries[key.Key];
                 var propertyName = key.PropertyName ?? "";
                 var value = entry.Values[propertyName]!;
-                var kv = value.GetValue(_lru, entry, propertyName);
+                var kv = value.GetValue(_lru);
                 _parameters.StorageInterface.Set(new KeyValueStorageKey(DbName, kv.Key, key.PropertyName),
                     kv.BuildData(_parameters.Versioned));
                 _dirtyKeys.Remove(key);
@@ -186,7 +232,7 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
 
     public IEnumerable<KeyValue> Get( int from, int to, string? propertyName)
     {
-        Cleanup();
+        Cleanup(true);
         var fromKey = _parameters.DateToKey(from);
         var toKey = _parameters.DateToKey(to);
         EnterReadLock();
@@ -210,7 +256,7 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
 
     public KeyValue? GetLast(int from, int to, string? propertyName)
     {
-        Cleanup();
+        Cleanup(true);
         var fromKey = _parameters.DateToKey(from);
         var toKey = _parameters.DateToKey(to);  
         EnterReadLock();
@@ -234,16 +280,16 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
 
     public void AddOrUpdate(int date, string? propertyName, Func<byte[]> addFunc, Func<byte[], byte[]> updateFunc)
     {
-        Cleanup();
         var key = _parameters.DateToKey(date);
         var pName = propertyName ?? "";
         EnterWriteLock();
         try
         {
+            Cleanup(false);
             int difference;
             var entry = _entries[key];
             if (entry.Values.TryGetValue(pName, out var value))
-                difference = value!.SetData(updateFunc(value.Value.Value), _parameters.Versioned, _lru, entry, pName);
+                difference = value!.SetData(updateFunc(value.Value.Value), _parameters.Versioned, _lru);
             else
             {
                 value = new TimeSeriesEntryValue(new KeyValue(date, _parameters.Versioned ? 1 : 0, addFunc()),
@@ -267,7 +313,6 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
 
     public KeyValue Get(int date, string? propertyName)
     {
-        Cleanup();
         var key = _parameters.DateToKey(date);
         var difference = 0;
         var result = _entries[key].Get(DbName, _parameters.Versioned, _parameters.StorageInterface,
@@ -279,59 +324,53 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
 
     public void Set(List<KeyValue> data, string? propertyName)
     {
-        Cleanup();
+        Cleanup(false);
         var pName = propertyName ?? "";
-        EnterWriteLock();
-        try
+        foreach (var kv in data)
         {
-            foreach (var kv in data)
+            var key = _parameters.DateToKey(kv.Key);
+            var entry = _entries[key];
+            if (entry.Values.TryGetValue(pName, out var value))
+                _totalSize += value!.SetData(kv.Value, _parameters.Versioned, _lru);
+            else
             {
-                var key = _parameters.DateToKey(kv.Key);
-                var entry = _entries[key];
-                if (entry.Values.TryGetValue(pName, out var value))
-                    _totalSize += value!.SetData(kv.Value, _parameters.Versioned, _lru, entry, pName);
-                else
-                {
-                    value = new TimeSeriesEntryValue(_parameters.Versioned ? kv with { Version = 1 } : kv, _lru, entry,
-                        pName);
-                    _totalSize += value.Value.Value.Length;
-                    entry.Values[pName] = value;
-                }
-
-                if (!_parameters.WriteBack)
-                    _parameters.StorageInterface.Set(new KeyValueStorageKey(DbName, kv.Key, propertyName),
-                        value.Value.BuildData(_parameters.Versioned));
-                else
-                    _dirtyKeys.Add(new KeyValueStorageShortKey(key, propertyName));
+                value = new TimeSeriesEntryValue(_parameters.Versioned ? kv with { Version = 1 } : kv, _lru, entry,
+                    pName);
+                _totalSize += value.Value.Value.Length;
+                entry.Values[pName] = value;
             }
-        }
-        catch
-        {
-            ExitWriteLock();
-            throw;
+
+            if (!_parameters.WriteBack)
+                _parameters.StorageInterface.Set(new KeyValueStorageKey(DbName, kv.Key, propertyName),
+                    value.Value.BuildData(_parameters.Versioned));
+            else
+                _dirtyKeys.Add(new KeyValueStorageShortKey(key, propertyName));
         }
     }
 
-    private void Cleanup()
+    public override void Cleanup(bool enterWriteLock)
     {
         if (_totalSize <= _parameters.MaximumMemoryUsage) return;
-        EnterWriteLock();
+        if (enterWriteLock) EnterWriteLock();
+        _lru.Lock();
         try
         {
-            var toRemove = new List<long>();
-            foreach (var item in _lru)
+            var toRemove = new List<LinkedListNode<LruItem>>();
+            _lru.ReverseForEach(item =>
             {
-                if (_totalSize <= _parameters.MaximumMemoryUsage) break;
+                if (_totalSize <= _parameters.MaximumMemoryUsage) return true;
                 _totalSize -= item.Value.Value.Value.Value.Length;
                 item.Value.Entry.Values[item.Value.PropertyName] = null;
-                toRemove.Add(item.Key);
-            }
-            foreach (var key in toRemove)
-                _lru.Remove(key);
+                toRemove.Add(item);
+                return false;
+            });
+            foreach (var item in toRemove)
+                _lru.Remove(item);
         }
         finally
         {
-            ExitWriteLock();
+            _lru.Unlock();
+            if (enterWriteLock) ExitWriteLock();
         }
     }
 }
@@ -339,16 +378,15 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
 public sealed class TimeSeriesStorage: GenericKeyValueStorage<TimeSeriesDatabaseInfo>
 {
     private readonly Dictionary<string, TimeSeriesDatabaseParameters> _databaseParameters;
-    private readonly TimeSeriesDatabaseParametersRecord? _defaultParameters;
     
     public TimeSeriesStorage(Logger logger, ServerConfigurationParameters parameters): base(logger, parameters)
     {
         var databaseParameters = parameters.GetParameter<Dictionary<string, TimeSeriesDatabaseParametersRecord>>("storageDatabaseParameters");
-        _defaultParameters = databaseParameters.GetValueOrDefault("default");
+        var defaultParameters = databaseParameters.GetValueOrDefault("default");
         _databaseParameters = databaseParameters
             .Where(kv => kv.Key != "default")
             .ToDictionary(kv => kv.Key,
-                kv => new TimeSeriesDatabaseParameters(kv.Value, kv.Key, _defaultParameters, StorageInterface,
+                kv => new TimeSeriesDatabaseParameters(kv.Value, kv.Key, defaultParameters, StorageInterface,
                     StorageLogger, Versioned, WriteBackInterval > 0));
     }
 

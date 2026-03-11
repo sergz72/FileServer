@@ -278,4 +278,8 @@ public class DatabaseInfo
     {
         DbVersion++;
     }
+
+    public virtual void Cleanup(bool enterWriteLock)
+    {
+    }
 }

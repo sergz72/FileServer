@@ -94,6 +94,7 @@ public abstract class GenericKeyValueStorage<T>: IStoragePlugin where T: Databas
     public (DatabaseInfo, int) GetFileVersion(string dbName, int key, string? propertyName = null)
     {
         var dbInfo = GetDatabaseInfo(dbName);
+        dbInfo.Cleanup(true);
         dbInfo.EnterReadLock();
         try
         {
