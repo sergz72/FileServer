@@ -65,7 +65,9 @@ internal sealed class TimeSeriesEntry
     }
 }
 
-internal sealed class DatabaseParameters
+public record TimeSeriesDatabaseParametersRecord(int MaximumMemoryUsage, int MinimumDate, int NumDaysFromNow);
+
+public sealed class TimeSeriesDatabaseParameters
 {
     internal string DbName { get; private set; } = "";
     public int MaximumMemoryUsage { get; set; }
@@ -79,9 +81,13 @@ internal sealed class DatabaseParameters
     
     private int _minDay;
 
-    public DatabaseParameters Apply(string dbName, DatabaseParameters? defaultParameters,
-        IKeyValueStorage storageInterface, Logger storageLogger, bool versioned, bool writeBack)
+    public TimeSeriesDatabaseParameters(TimeSeriesDatabaseParametersRecord parameters, string dbName,
+        TimeSeriesDatabaseParametersRecord? defaultParameters, IKeyValueStorage storageInterface, Logger storageLogger,
+        bool versioned, bool writeBack)
     {
+        MaximumMemoryUsage = parameters.MaximumMemoryUsage;
+        MinimumDate = parameters.MinimumDate;
+        NumDaysFromNow = parameters.NumDaysFromNow;
         DbName = dbName;
         Versioned = versioned;
         WriteBack = writeBack;
@@ -98,7 +104,6 @@ internal sealed class DatabaseParameters
         if (NumDaysFromNow == 0) throw new Exception($"{dbName}: NumDaysFromNow is not set");
         _minDay = DateToDayNumber(MinimumDate);
         NumEntries = DateOnly.FromDateTime(DateTime.UtcNow).DayNumber - _minDay + NumDaysFromNow;
-        return this;
     }
     
     internal int DateToKey(int date)
@@ -107,7 +112,7 @@ internal sealed class DatabaseParameters
         return day > _minDay ? day - _minDay : 0;
     }
     
-    internal static int DateToDayNumber(int date) =>
+    public static int DateToDayNumber(int date) =>
         new DateOnly(date / 10000, (date / 100) % 100, date % 100).DayNumber;
 }
 
@@ -117,15 +122,15 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
 {
     private readonly TimeSeriesEntry[] _entries;
     private readonly HashSet<KeyValueStorageShortKey> _dirtyKeys;
-    private readonly DatabaseParameters _parameters;
+    private readonly TimeSeriesDatabaseParameters _parameters;
     private readonly SortedDictionary<long, LruItem> _lru;
     
     private int _totalSize;
     
-    internal TimeSeriesDatabaseInfo(DatabaseParameters databaseParameters,
-        IEnumerable<KeyValueStorageShortKey> existingKeys): base(databaseParameters.DbName)
+    internal TimeSeriesDatabaseInfo(TimeSeriesDatabaseParameters timeSeriesDatabaseParameters,
+        IEnumerable<KeyValueStorageShortKey> existingKeys): base(timeSeriesDatabaseParameters.DbName)
     {
-        _parameters = databaseParameters;
+        _parameters = timeSeriesDatabaseParameters;
         _entries = new TimeSeriesEntry[_parameters.NumEntries];
         foreach (var g in existingKeys.GroupBy(k => k.Key))
             _entries[_parameters.DateToKey(g.Key)] = new TimeSeriesEntry(g.Key, g
@@ -316,22 +321,25 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
 
 public sealed class TimeSeriesStorage: GenericKeyValueStorage<TimeSeriesDatabaseInfo>
 {
-    private readonly Dictionary<string, DatabaseParameters> _databaseParameters;
-    private readonly DatabaseParameters? _defaultParameters;
+    private readonly Dictionary<string, TimeSeriesDatabaseParameters> _databaseParameters;
+    private readonly TimeSeriesDatabaseParametersRecord? _defaultParameters;
     
     public TimeSeriesStorage(Logger logger, ServerConfigurationParameters parameters): base(logger, parameters)
     {
-        _databaseParameters = parameters.GetParameter<Dictionary<string, DatabaseParameters>>("storageDatabaseParameters");
-        _databaseParameters.TryGetValue("default", out _defaultParameters);
-        foreach (var kv in _databaseParameters.Where(kv => kv.Key != "default"))
-            kv.Value.Apply(kv.Key, _defaultParameters, StorageInterface, StorageLogger, Versioned, WriteBackInterval > 0);
+        var databaseParameters = parameters.GetParameter<Dictionary<string, TimeSeriesDatabaseParametersRecord>>("storageDatabaseParameters");
+        _defaultParameters = databaseParameters.GetValueOrDefault("default");
+        _databaseParameters = databaseParameters
+            .Where(kv => kv.Key != "default")
+            .ToDictionary(kv => kv.Key,
+                kv => new TimeSeriesDatabaseParameters(kv.Value, kv.Key, _defaultParameters, StorageInterface,
+                    StorageLogger, Versioned, WriteBackInterval > 0));
     }
 
     protected override TimeSeriesDatabaseInfo CreateDatabaseInfo(string dbName, IEnumerable<KeyValueStorageShortKey> existingKeys)
     {
         var parameters = _databaseParameters.TryGetValue(dbName, out var dbParameters)
             ? dbParameters
-            : new DatabaseParameters().Apply(dbName, _defaultParameters, StorageInterface, StorageLogger, Versioned, WriteBackInterval > 0);
+            : throw new Exception($"database {dbName} not found");
         return new TimeSeriesDatabaseInfo(parameters, existingKeys);
     }
 
