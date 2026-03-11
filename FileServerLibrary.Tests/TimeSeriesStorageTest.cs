@@ -36,8 +36,8 @@ public sealed class TimeSeriesStorageTest(): GenericKeyValueStorageTest<TimeSeri
                 {"storageDatabaseParameters", JsonSerializer.SerializeToElement(
                     new Dictionary<string, TimeSeriesDatabaseParametersRecord>()
                     {
-                        {"db1", new TimeSeriesDatabaseParametersRecord(100 * 1024 * 1024, MinDate, NumDaysFromNow)},
-                        {"db2", new TimeSeriesDatabaseParametersRecord(100 * 1024 * 1024, MinDate, NumDaysFromNow)}
+                        {"db1", new TimeSeriesDatabaseParametersRecord(100 * 1024, MinDate, NumDaysFromNow)},
+                        {"db2", new TimeSeriesDatabaseParametersRecord(100 * 1024, MinDate, NumDaysFromNow)}
                     })}
             }));
         PerformTests(10, 2000, false);
@@ -56,8 +56,8 @@ public sealed class TimeSeriesStorageTest(): GenericKeyValueStorageTest<TimeSeri
                 {"storageDatabaseParameters", JsonSerializer.SerializeToElement(
                     new Dictionary<string, TimeSeriesDatabaseParametersRecord>()
                     {
-                        {"db1", new TimeSeriesDatabaseParametersRecord(100 * 1024 * 1024, MinDate, NumDaysFromNow)},
-                        {"db2", new TimeSeriesDatabaseParametersRecord(100 * 1024 * 1024, MinDate, NumDaysFromNow)}
+                        {"db1", new TimeSeriesDatabaseParametersRecord(100 * 1024, MinDate, NumDaysFromNow)},
+                        {"db2", new TimeSeriesDatabaseParametersRecord(100 * 1024, MinDate, NumDaysFromNow)}
                     })}
             }));
         PerformTests(10, 2000, true);
@@ -76,8 +76,8 @@ public sealed class TimeSeriesStorageTest(): GenericKeyValueStorageTest<TimeSeri
                 {"storageDatabaseParameters", JsonSerializer.SerializeToElement(
                     new Dictionary<string, TimeSeriesDatabaseParametersRecord>()
                     {
-                        {"db1", new TimeSeriesDatabaseParametersRecord(100 * 1024 * 1024, MinDate, NumDaysFromNow)},
-                        {"db2", new TimeSeriesDatabaseParametersRecord(100 * 1024 * 1024, MinDate, NumDaysFromNow)}
+                        {"db1", new TimeSeriesDatabaseParametersRecord(100 * 1024, MinDate, NumDaysFromNow)},
+                        {"db2", new TimeSeriesDatabaseParametersRecord(100 * 1024, MinDate, NumDaysFromNow)}
                     })}
             }));
         PerformTests(10, 6000, false);

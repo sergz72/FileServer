@@ -190,13 +190,15 @@ public abstract class GenericKeyValueStorageTest<T> where T: DatabaseInfo
             var resultList = result.ToList();
             var expected = Items
                 .Where(kv =>
-                    kv.Key.DbName == dbName && kv.Key.Key >= from && kv.Key.Key < to &&
+                    kv.Key.DbName == dbName && kv.Key.Key >= from && kv.Key.Key <= to &&
                     kv.Key.PropertyName == propertyName)
                 .Select(kv => kv.Value)
                 .OrderBy(kv => kv.Key)
                 .ToList();
             dbInfo.ExitReadLock();
             dbInfo = null;
+            if (expected.Count != resultList.Count)
+                Assert.Fail("Different number of items");
             Assert.AreEqual(expected, resultList);
         }
         finally

@@ -1,5 +1,3 @@
-using System.Diagnostics;
-
 namespace FileServerLibrary;
 
 internal sealed class TimeSeriesEntryValue
@@ -7,7 +5,8 @@ internal sealed class TimeSeriesEntryValue
     private readonly LinkedListNode<LruItem> _node;
 
     internal KeyValue Value { get; private set; }
-    
+    public bool IsDirty { get; private set; }
+
     internal TimeSeriesEntryValue(KeyValue value, Lru<LruItem> lru, TimeSeriesEntry entry,
         string propertyName)
     {
@@ -18,6 +17,7 @@ internal sealed class TimeSeriesEntryValue
     public int SetData(byte[] newData, bool versioned, Lru<LruItem> lru)
     {
         UpdateLru(lru);
+        IsDirty = true;
         var difference = newData.Length - Value.Value.Length;
         Value = new KeyValue(Value.Key, versioned ? Value.Version + 1 : 0, newData);
         return difference;
@@ -33,17 +33,24 @@ internal sealed class TimeSeriesEntryValue
         UpdateLru(lru);
         return Value;
     }
+
+    internal void SetDirty(bool dirty)
+    {
+        IsDirty = dirty;
+    }
 }
 
 internal sealed class TimeSeriesEntry
 {
-    internal Dictionary<string, TimeSeriesEntryValue?> Values { get; private set; }
+    internal readonly Dictionary<string, TimeSeriesEntryValue?> Values;
     internal readonly int Date;
 
-    internal TimeSeriesEntry(int date)
+    internal TimeSeriesEntry(int date, HashSet<string> values)
     {
         Date = date;
-        Values = [];
+        Values = values
+            .Select<string, (string, TimeSeriesEntryValue?)>(v => (v, null))
+            .ToDictionary();
     }
 
     internal KeyValue? Get(string dbName, bool versioned, IKeyValueStorage storageInterface, string? propertyName,
@@ -60,38 +67,28 @@ internal sealed class TimeSeriesEntry
         Values[pName] = new TimeSeriesEntryValue(kv, lru, this, pName);
         return kv;
     }
-
-    public void SetValues(HashSet<string> values)
-    {
-        Values = values
-            .Select<string, (string, TimeSeriesEntryValue?)>(v => (v, null))
-            .ToDictionary();
-    }
 }
 
 public record TimeSeriesDatabaseParametersRecord(int MaximumMemoryUsage, int MinimumDate, int NumDaysFromNow);
 
 public sealed class TimeSeriesDatabaseParameters
 {
-    internal string DbName { get; private set; } = "";
-    public int MaximumMemoryUsage { get; set; }
-    public int MinimumDate { get; set; }
-    public int NumDaysFromNow { get; set; }
-    internal bool Versioned { get; private set; }
-    internal bool WriteBack { get; private set; }
-    internal IKeyValueStorage StorageInterface { get; private set; } = null!;
-    internal Logger StorageLogger { get; private set; } = null!;
-    internal int NumEntries { get; private set; }
-    
-    internal readonly int MinDay;
+    internal readonly string DbName;
+    public readonly int MaximumMemoryUsage;
+    internal readonly bool Versioned;
+    internal readonly bool WriteBack;
+    internal readonly IKeyValueStorage StorageInterface;
+    internal readonly Logger StorageLogger;
+    internal readonly int NumEntries;
+    private readonly int _minDay;
 
     public TimeSeriesDatabaseParameters(TimeSeriesDatabaseParametersRecord parameters, string dbName,
         TimeSeriesDatabaseParametersRecord? defaultParameters, IKeyValueStorage storageInterface, Logger storageLogger,
         bool versioned, bool writeBack)
     {
         MaximumMemoryUsage = parameters.MaximumMemoryUsage;
-        MinimumDate = parameters.MinimumDate;
-        NumDaysFromNow = parameters.NumDaysFromNow;
+        var minimumDate = parameters.MinimumDate;
+        var numDaysFromNow = parameters.NumDaysFromNow;
         DbName = dbName;
         Versioned = versioned;
         WriteBack = writeBack;
@@ -100,20 +97,20 @@ public sealed class TimeSeriesDatabaseParameters
         if (defaultParameters != null)
         {
             if (MaximumMemoryUsage == 0) MaximumMemoryUsage = defaultParameters.MaximumMemoryUsage;
-            if (MinimumDate == 0) MinimumDate = defaultParameters.MinimumDate;
-            if (NumDaysFromNow == 0) NumDaysFromNow = defaultParameters.NumDaysFromNow;
+            if (minimumDate == 0) minimumDate = defaultParameters.MinimumDate;
+            if (numDaysFromNow == 0) numDaysFromNow = defaultParameters.NumDaysFromNow;
         }
         if (MaximumMemoryUsage == 0) throw new Exception($"{dbName}: MaximumMemoryUsage is not set");
-        if (MinimumDate == 0) throw new Exception($"{dbName}: MinimumDate is not set");
-        if (NumDaysFromNow == 0) throw new Exception($"{dbName}: NumDaysFromNow is not set");
-        MinDay = DateToDayNumber(MinimumDate);
-        NumEntries = DateOnly.FromDateTime(DateTime.UtcNow).DayNumber - MinDay + NumDaysFromNow + 1;
+        if (minimumDate == 0) throw new Exception($"{dbName}: MinimumDate is not set");
+        if (numDaysFromNow == 0) throw new Exception($"{dbName}: NumDaysFromNow is not set");
+        _minDay = DateToDayNumber(minimumDate);
+        NumEntries = DateOnly.FromDateTime(DateTime.UtcNow).DayNumber - _minDay + numDaysFromNow + 1;
     }
     
     internal int DateToKey(int date)
     {
         var day = DateToDayNumber(date);
-        return day > MinDay ? day - MinDay : 0;
+        return day > _minDay ? day - _minDay : 0;
     }
     
     public static int DateToDayNumber(int date) =>
@@ -171,7 +168,7 @@ public sealed class Lru<T>
 
 public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
 {
-    private readonly TimeSeriesEntry[] _entries;
+    private readonly TimeSeriesEntry?[] _entries;
     private readonly HashSet<KeyValueStorageShortKey> _dirtyKeys;
     private readonly TimeSeriesDatabaseParameters _parameters;
     private readonly Lru<LruItem> _lru;
@@ -188,15 +185,9 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
         IEnumerable<KeyValueStorageShortKey> existingKeys): base(timeSeriesDatabaseParameters.DbName)
     {
         _parameters = timeSeriesDatabaseParameters;
-        _entries = new TimeSeriesEntry[_parameters.NumEntries];
-        var date = DateOnly.FromDayNumber(_parameters.MinDay);
-        for (var i = 0; i < _parameters.NumEntries; i++)
-        {
-            _entries[i] = new TimeSeriesEntry(BuildDate(date));
-            date = date.AddDays(1);
-        }
+        _entries = new TimeSeriesEntry?[_parameters.NumEntries];
         foreach (var g in existingKeys.GroupBy(k => k.Key))
-            _entries[_parameters.DateToKey(g.Key)].SetValues(g
+            _entries[_parameters.DateToKey(g.Key)] = new TimeSeriesEntry(g.Key, g
                 .Select(k => k.PropertyName ?? "")
                 .ToHashSet());
         _dirtyKeys = [];
@@ -211,12 +202,13 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
         {
             foreach (var key in _dirtyKeys.ToList())
             {
-                var entry = _entries[key.Key];
+                var entry = _entries[key.Key]!;
                 var propertyName = key.PropertyName ?? "";
                 var value = entry.Values[propertyName]!;
                 var kv = value.GetValue(_lru);
                 _parameters.StorageInterface.Set(new KeyValueStorageKey(DbName, kv.Key, key.PropertyName),
                     kv.BuildData(_parameters.Versioned));
+                value.SetDirty(false);
                 _dirtyKeys.Remove(key);
             }
         }
@@ -230,7 +222,7 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
         }
     }
 
-    public IEnumerable<KeyValue> Get( int from, int to, string? propertyName)
+    public IEnumerable<KeyValue> Get(int from, int to, string? propertyName)
     {
         Cleanup(true);
         var fromKey = _parameters.DateToKey(from);
@@ -240,7 +232,7 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
         {
             var difference = 0;
             var result = Enumerable.Range(fromKey, toKey - fromKey + 1)
-                .Select(i => _entries[i].Get(DbName, _parameters.Versioned, _parameters.StorageInterface,
+                .Select(i => _entries[i]?.Get(DbName, _parameters.Versioned, _parameters.StorageInterface,
                     propertyName, _lru, ref difference))
                 .Where(kv => kv != null)
                 .Cast<KeyValue>();
@@ -265,7 +257,7 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
             var difference = 0;
             var result = Enumerable.Range(fromKey, toKey - fromKey + 1)
                 .Reverse()
-                .Select(i => _entries[i].Get(DbName, _parameters.Versioned, _parameters.StorageInterface,
+                .Select(i => _entries[i]?.Get(DbName, _parameters.Versioned, _parameters.StorageInterface,
                     propertyName, _lru, ref difference))
                 .FirstOrDefault(kv => kv != null);
             Interlocked.Add(ref _totalSize, difference);
@@ -288,20 +280,28 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
             Cleanup(false);
             int difference;
             var entry = _entries[key];
-            if (entry.Values.TryGetValue(pName, out var value))
-                difference = value!.SetData(updateFunc(value.Value.Value), _parameters.Versioned, _lru);
+            if (entry != null && entry.Values.TryGetValue(pName, out var value) && value != null)
+                difference = value.SetData(updateFunc(value.Value.Value), _parameters.Versioned, _lru);
             else
             {
+                if (entry == null)
+                {
+                    entry = new TimeSeriesEntry(date, []);
+                    _entries[key] = entry;
+                }
                 value = new TimeSeriesEntryValue(new KeyValue(date, _parameters.Versioned ? 1 : 0, addFunc()),
                     _lru, entry, pName);
                 difference = value.Value.Value.Length;
-                _entries[key].Values[pName] = value;
+                entry.Values[pName] = value;
             }
             if (!_parameters.WriteBack)
                 _parameters.StorageInterface.Set(new KeyValueStorageKey(DbName, date, propertyName),
                     value.Value.BuildData(_parameters.Versioned));
             else
+            {
+                value.SetDirty(true);
                 _dirtyKeys.Add(new KeyValueStorageShortKey(key, propertyName));
+            }
             _totalSize += difference;
         }
         catch
@@ -315,7 +315,7 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
     {
         var key = _parameters.DateToKey(date);
         var difference = 0;
-        var result = _entries[key].Get(DbName, _parameters.Versioned, _parameters.StorageInterface,
+        var result = _entries[key]?.Get(DbName, _parameters.Versioned, _parameters.StorageInterface,
                          propertyName, _lru, ref difference)
                ?? throw new Exception($"item {DbName} {date} {propertyName} not found");
         Interlocked.Add(ref _totalSize, difference);
@@ -330,10 +330,15 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
         {
             var key = _parameters.DateToKey(kv.Key);
             var entry = _entries[key];
-            if (entry.Values.TryGetValue(pName, out var value))
-                _totalSize += value!.SetData(kv.Value, _parameters.Versioned, _lru);
+            if (entry != null && entry.Values.TryGetValue(pName, out var value) && value != null)
+                _totalSize += value.SetData(kv.Value, _parameters.Versioned, _lru);
             else
             {
+                if (entry == null)
+                {
+                    entry = new TimeSeriesEntry(kv.Key, []);
+                    _entries[key] = entry;
+                }
                 value = new TimeSeriesEntryValue(_parameters.Versioned ? kv with { Version = 1 } : kv, _lru, entry,
                     pName);
                 _totalSize += value.Value.Value.Length;
@@ -344,7 +349,10 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
                 _parameters.StorageInterface.Set(new KeyValueStorageKey(DbName, kv.Key, propertyName),
                     value.Value.BuildData(_parameters.Versioned));
             else
+            {
+                value.SetDirty(true);
                 _dirtyKeys.Add(new KeyValueStorageShortKey(key, propertyName));
+            }
         }
     }
 
@@ -359,6 +367,7 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
             _lru.ReverseForEach(item =>
             {
                 if (_totalSize <= _parameters.MaximumMemoryUsage) return true;
+                if (item.Value.Value.IsDirty) return false;
                 _totalSize -= item.Value.Value.Value.Value.Length;
                 item.Value.Entry.Values[item.Value.PropertyName] = null;
                 toRemove.Add(item);
