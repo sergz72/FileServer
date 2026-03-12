@@ -44,6 +44,7 @@ internal sealed class TimeSeriesEntry
 {
     internal readonly Dictionary<string, TimeSeriesEntryValue?> Values;
     internal readonly int Date;
+    private readonly Lock _lock;
 
     internal TimeSeriesEntry(int date, HashSet<string> values)
     {
@@ -51,21 +52,29 @@ internal sealed class TimeSeriesEntry
         Values = values
             .Select<string, (string, TimeSeriesEntryValue?)>(v => (v, null))
             .ToDictionary();
+        _lock = new Lock();
     }
 
     internal KeyValue? Get(string dbName, bool versioned, IKeyValueStorage storageInterface, string? propertyName,
-        Lru<LruItem> lru, ref int sizeDifference)
+        Lru<LruItem> lru, ref int size)
     {
         var pName = propertyName ?? ""; 
         if (!Values.TryGetValue(pName, out var value)) return null;
         if (value != null)
             return value.GetValue(lru);
-        var data = storageInterface.Get(new KeyValueStorageKey(dbName, Date, propertyName));
-        if (data == null) throw new Exception($"item {dbName} {Date} {propertyName} not found");
-        var kv = KeyValue.ReadData(Date, data, versioned);
-        sizeDifference += kv.Value.Length;
-        Values[pName] = new TimeSeriesEntryValue(kv, lru, this, pName);
-        return kv;
+        using (_lock.EnterScope())
+        {
+            if (!Values.TryGetValue(pName, out value)) return null;
+            if (value != null)
+                return value.GetValue(lru);
+
+            var data = storageInterface.Get(new KeyValueStorageKey(dbName, Date, propertyName));
+            if (data == null) throw new Exception($"item {dbName} {Date} {propertyName} not found");
+            var kv = KeyValue.ReadData(Date, data, versioned);
+            size += kv.Value.Length;
+            Values[pName] = new TimeSeriesEntryValue(kv, lru, this, pName);
+            return kv;
+        }
     }
 }
 
@@ -230,13 +239,11 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
         EnterReadLock();
         try
         {
-            var difference = 0;
             var result = Enumerable.Range(fromKey, toKey - fromKey + 1)
                 .Select(i => _entries[i]?.Get(DbName, _parameters.Versioned, _parameters.StorageInterface,
-                    propertyName, _lru, ref difference))
+                    propertyName, _lru, ref _totalSize))
                 .Where(kv => kv != null)
                 .Cast<KeyValue>();
-            Interlocked.Add(ref _totalSize, difference);
             return result;
         }
         catch

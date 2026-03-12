@@ -47,7 +47,7 @@ public interface IDecoderPlugin : IPlugin
     ICommand Decode(Logger logger, byte[] data);
 }
 
-public record KeyValue(int Key, int Version, byte[] Value)
+public sealed record KeyValue(int Key, int Version, byte[] Value)
 {
     public void ToBinary(BinaryWriter writer)
     {
@@ -84,6 +84,13 @@ public record KeyValue(int Key, int Version, byte[] Value)
     {
         var version = versioned ? BitConverter.ToInt32(data, 0) : 0;
         return new KeyValue(key, version, versioned ? data[4..] : data);
+    }
+
+    public bool Equals(KeyValue? other)
+    {
+        if (other == null) return false;
+        if (ReferenceEquals(this, other)) return true;
+        return Key == other.Key && Version == other.Version && Value.SequenceEqual(other.Value);
     }
 }
 

@@ -34,6 +34,23 @@ public class MemoryStorageWithInitialData : MemoryStorage
     }
 }
 
+public record TimeSeriesGetSetTestData(
+    bool Versioned,
+    int MaximumMemoryUsage,
+    int WriteBackInterval,
+    int Test1Version,
+    byte[] Test1Data,
+    int Test2Version,
+    byte[] Test2Data,
+    int Test3Size,
+    byte[] Test4Data,
+    byte[] Test4Data2,
+    int Test5Version,
+    byte[] Test5Data,
+    int Test5Version2,
+    byte[] Test5Data2
+);
+
 [TestFixture]
 [TestOf(typeof(TimeSeriesStorage))]
 public sealed class TimeSeriesStorageTest(): GenericKeyValueStorageTest<TimeSeriesDatabaseInfo>(
@@ -45,6 +62,9 @@ public sealed class TimeSeriesStorageTest(): GenericKeyValueStorageTest<TimeSeri
     private static readonly int MaxIntDate = TimeSeriesDatabaseInfo.BuildDate(MaxDate);
     private const int NumDaysFromNow = 3650;
     
+    private static readonly byte[] Test4Data = [5, 6, 7, 8, 9, 0];
+    private static readonly byte[] Test4Data2 = [9, 5, 6, 7, 8, 9, 0];
+    
     [TearDown]
     public void TearDown()
     {
@@ -52,37 +72,98 @@ public sealed class TimeSeriesStorageTest(): GenericKeyValueStorageTest<TimeSeri
     }
 
     [Test]
-    public void TestGetSet()
+    public void TestGetSetNotVersionedNoWriteBack()
+    {
+        TestGetSet(new TimeSeriesGetSetTestData(
+            Versioned: false,
+            MaximumMemoryUsage: 100 * 1024,
+            WriteBackInterval: 0,
+            Test1Version: 0,
+            Test1Data: MemoryStorageWithInitialData.Values[0],
+            Test2Version: 0,
+            Test2Data: MemoryStorageWithInitialData.Values[1],
+            Test3Size: MemoryStorageWithInitialData.Values[0].Length + MemoryStorageWithInitialData.Values[1].Length,
+            Test4Data: Test4Data,
+            Test4Data2: Test4Data2,
+            Test5Version: 0,
+            Test5Data: MemoryStorageWithInitialData.Values[2],
+            Test5Version2: 0,
+            Test5Data2: Test4Data2
+            ));
+    }
+
+    [Test]
+    public void TestGetSetNoWriteBack()
+    {
+        TestGetSet(new TimeSeriesGetSetTestData(
+            Versioned: true,
+            MaximumMemoryUsage: 100 * 1024,
+            WriteBackInterval: 0,
+            Test1Version: BitConverter.ToInt32(MemoryStorageWithInitialData.Values[0]),
+            Test1Data: MemoryStorageWithInitialData.Values[0][4..],
+            Test2Version: BitConverter.ToInt32(MemoryStorageWithInitialData.Values[1]),
+            Test2Data: MemoryStorageWithInitialData.Values[1][4..],
+            Test3Size: MemoryStorageWithInitialData.Values[0].Length + MemoryStorageWithInitialData.Values[1].Length - 8,
+            Test4Data: Test4Data,
+            Test4Data2: Test4Data2,
+            Test5Version: BitConverter.ToInt32(MemoryStorageWithInitialData.Values[2]),
+            Test5Data: MemoryStorageWithInitialData.Values[2][4..],
+            Test5Version2: 2,
+            Test5Data2: Test4Data2
+        ));
+    }
+    
+
+    public void TestGetSet(TimeSeriesGetSetTestData testData)
     {
         Storage = new TimeSeriesStorage(new ConsoleLogger("test", null, LogLevel.Error), new ServerConfigurationParameters(
             new Dictionary<string, Type> {{"MemoryStorageWithInitialData", typeof(MemoryStorageWithInitialData)}},
             new Dictionary<string, JsonElement>
             {
                 {"storageInterface", JsonSerializer.SerializeToElement("MemoryStorageWithInitialData")},
-                {"versionedStorage", JsonSerializer.SerializeToElement(false)},
-                {"storageWriteBackInterval", JsonSerializer.SerializeToElement(0)},
+                {"versionedStorage", JsonSerializer.SerializeToElement(testData.Versioned)},
+                {"storageWriteBackInterval", JsonSerializer.SerializeToElement(testData.WriteBackInterval)},
                 {"storageDatabaseParameters", JsonSerializer.SerializeToElement(
                     new Dictionary<string, TimeSeriesDatabaseParametersRecord>()
                     {
-                        {"db1", new TimeSeriesDatabaseParametersRecord(100 * 1024, MinDate, NumDaysFromNow)},
-                        {"db2", new TimeSeriesDatabaseParametersRecord(100 * 1024, MinDate, NumDaysFromNow)}
+                        {"db1", new TimeSeriesDatabaseParametersRecord(testData.MaximumMemoryUsage, MinDate, NumDaysFromNow)},
+                        {"db2", new TimeSeriesDatabaseParametersRecord(testData.MaximumMemoryUsage, MinDate, NumDaysFromNow)}
                     })}
             }));
         var storage = (TimeSeriesStorage)Storage;
         Assert.That(storage.GetTotalSize("db1"), Is.EqualTo(0));
         Assert.That(storage.GetTotalSize("db2"), Is.EqualTo(0));
-        var (dbInfo, result) = storage.Get("db1", 20120101, 20120101, null);
+        // test 1
+        var (dbInfo, result) = storage.Get("db1", 20120101, 20120101);
         var resultList = result.ToList();
         dbInfo.ExitReadLock();
         Assert.That(resultList.Count, Is.EqualTo(1));
-        Assert.That(resultList[0], Is.EqualTo(new KeyValue(20120101, 0, MemoryStorageWithInitialData.Values[0])));
+        Assert.That(resultList[0], Is.EqualTo(new KeyValue(20120101, testData.Test1Version, testData.Test1Data)));
+        // test 2
         (dbInfo, result) = storage.Get("db1", 20120101, 20120101, "aggregated");
         resultList = result.ToList();
         dbInfo.ExitReadLock();
         Assert.That(resultList.Count, Is.EqualTo(1));
-        Assert.That(resultList[0], Is.EqualTo(new KeyValue(20120101, 0, MemoryStorageWithInitialData.Values[1])));
+        Assert.That(resultList[0], Is.EqualTo(new KeyValue(20120101, testData.Test2Version, testData.Test2Data)));
+        // test 3
         Assert.That(storage.GetTotalSize("db1"), 
-            Is.EqualTo(MemoryStorageWithInitialData.Values[0].Length + MemoryStorageWithInitialData.Values[1].Length));
+            Is.EqualTo(testData.Test3Size));
+        // test 4
+        dbInfo = storage.AddOrUpdate("db2", 20120102, null, () => testData.Test4Data, _ => throw new Exception("Should not be called"));
+        dbInfo.ExitWriteLock();
+        Assert.That(storage.GetTotalSize("db2"), 
+            Is.EqualTo(testData.Test4Data.Length));
+        dbInfo = storage.AddOrUpdate("db2", 20120102, null, () => throw new Exception("Should not be called"), _ => testData.Test4Data2);
+        dbInfo.ExitWriteLock();
+        Assert.That(storage.GetTotalSize("db2"), 
+            Is.EqualTo(testData.Test4Data2.Length));
+        // test 5
+        (dbInfo, result) = storage.Get("db2", 20120101, 20120102);
+        resultList = result.ToList();
+        dbInfo.ExitReadLock();
+        Assert.That(resultList.Count, Is.EqualTo(2));
+        Assert.That(resultList[0], Is.EqualTo(new KeyValue(20120101, testData.Test5Version, testData.Test5Data)));
+        Assert.That(resultList[1], Is.EqualTo(new KeyValue(20120102, testData.Test5Version2, testData.Test5Data2)));
     }
     
     [Test]
