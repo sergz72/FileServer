@@ -31,16 +31,13 @@ public abstract class GenericKeyValueStorage<T>: IStoragePlugin where T: Databas
     protected readonly IKeyValueStorage StorageInterface;
     
     private volatile bool _stop;
-
-    protected virtual void InitOthers(Logger logger, ServerConfigurationParameters parameters)
-    {
-    }
-
-    public GenericKeyValueStorage(Logger storageLogger, ServerConfigurationParameters parameters,
+    
+    protected GenericKeyValueStorage(Logger storageLogger, ServerConfigurationParameters parameters,
+        IKeyValueStorage? storageInterface = null,
         Action<GenericKeyValueStorage<T>, Logger, ServerConfigurationParameters>? initOthers = null)
     {
         StorageLogger = storageLogger;
-        StorageInterface = parameters.CreateInstance<IKeyValueStorage>(
+        StorageInterface = storageInterface ?? parameters.CreateInstance<IKeyValueStorage>(
             parameters.GetStringParameter("storageInterface"), storageLogger, parameters);
         Versioned = parameters.GetBoolParameterOrDefault("versionedStorage", false);
         WriteBackInterval = parameters.GetIntParameterOrDefault("storageWriteBackInterval", 0);

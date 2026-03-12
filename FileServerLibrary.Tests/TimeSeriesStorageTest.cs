@@ -7,30 +7,30 @@ using NUnit.Framework;
 
 namespace FileServerLibrary.Tests;
 
-public class MemoryStorageWithInitialData : MemoryStorage
+internal static class MemoryStorageInitialData
 {
-    public static readonly KeyValueStorageKey[] Keys =
-    {
-        new KeyValueStorageKey("db1", 20120101, null),
-        new KeyValueStorageKey("db1", 20120101, "aggregated"),
-        new KeyValueStorageKey("db2", 20120101, null),
-        new KeyValueStorageKey("db2", 20120101, "aggregated")
-    };
+    internal static readonly KeyValueStorageKey[] Keys =
+    [
+        new ("db1", 20120101, null),
+        new ("db1", 20120101, "aggregated"),
+        new ("db2", 20120101, null),
+        new ("db2", 20120101, "aggregated")
+    ];
 
-    public static readonly byte[][] Values =
-    {
+    internal static readonly byte[][] Values =
+    [
         [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
         [2, 3, 4, 5, 6, 7, 8, 9, 10],
         [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
         [3, 4, 5, 6, 7, 8, 9, 10]
-    };
+    ];
     
-    public MemoryStorageWithInitialData(Logger logger, ServerConfigurationParameters parameters) : base(logger, parameters)
+    internal static void InitStorage(MemoryStorage storage)
     {
-        Set(Keys[0], Values[0]);
-        Set(Keys[1], Values[1]);
-        Set(Keys[2], Values[2]);
-        Set(Keys[3], Values[3]);
+        storage.Set(Keys[0], Values[0]);
+        storage.Set(Keys[1], Values[1]);
+        storage.Set(Keys[2], Values[2]);
+        storage.Set(Keys[3], Values[3]);
     }
 }
 
@@ -45,10 +45,13 @@ public record TimeSeriesGetSetTestData(
     int Test3Size,
     byte[] Test4Data,
     byte[] Test4Data2,
-    int Test5Version,
-    byte[] Test5Data,
-    int Test5Version2,
-    byte[] Test5Data2
+    List<KeyValue> Test5Data,
+    int Test6Version,
+    byte[] Test6Data,
+    int Test6Version2,
+    byte[] Test6Data2,
+    int Test6Version3,
+    int Test6Version4
 );
 
 [TestFixture]
@@ -74,21 +77,35 @@ public sealed class TimeSeriesStorageTest(): GenericKeyValueStorageTest<TimeSeri
     [Test]
     public void TestGetSetNotVersionedNoWriteBack()
     {
+        TestGetSetNotVersioned(0);
+    }
+
+    [Test]
+    public void TestGetSetNotVersionedWriteBack()
+    {
+        TestGetSetNotVersioned(100);
+    }
+    
+    public void TestGetSetNotVersioned(int writeBackInterval)
+    {
         TestGetSet(new TimeSeriesGetSetTestData(
             Versioned: false,
             MaximumMemoryUsage: 100 * 1024,
-            WriteBackInterval: 0,
+            WriteBackInterval: writeBackInterval,
             Test1Version: 0,
-            Test1Data: MemoryStorageWithInitialData.Values[0],
+            Test1Data: MemoryStorageInitialData.Values[0],
             Test2Version: 0,
-            Test2Data: MemoryStorageWithInitialData.Values[1],
-            Test3Size: MemoryStorageWithInitialData.Values[0].Length + MemoryStorageWithInitialData.Values[1].Length,
+            Test2Data: MemoryStorageInitialData.Values[1],
+            Test3Size: MemoryStorageInitialData.Values[0].Length + MemoryStorageInitialData.Values[1].Length,
             Test4Data: Test4Data,
             Test4Data2: Test4Data2,
-            Test5Version: 0,
-            Test5Data: MemoryStorageWithInitialData.Values[2],
-            Test5Version2: 0,
-            Test5Data2: Test4Data2
+            Test5Data: [new KeyValue(20120103, 0, [9, 8, 0, 5, 6, 9, 0]), new KeyValue(20120104, 0, [1, 2, 5, 4, 6, 7, 2, 4, 5])],
+            Test6Version: 0,
+            Test6Data: MemoryStorageInitialData.Values[2],
+            Test6Version2: 0,
+            Test6Data2: Test4Data2,
+            Test6Version3: 0,
+            Test6Version4: 0
             ));
     }
 
@@ -99,38 +116,59 @@ public sealed class TimeSeriesStorageTest(): GenericKeyValueStorageTest<TimeSeri
             Versioned: true,
             MaximumMemoryUsage: 100 * 1024,
             WriteBackInterval: 0,
-            Test1Version: BitConverter.ToInt32(MemoryStorageWithInitialData.Values[0]),
-            Test1Data: MemoryStorageWithInitialData.Values[0][4..],
-            Test2Version: BitConverter.ToInt32(MemoryStorageWithInitialData.Values[1]),
-            Test2Data: MemoryStorageWithInitialData.Values[1][4..],
-            Test3Size: MemoryStorageWithInitialData.Values[0].Length + MemoryStorageWithInitialData.Values[1].Length - 8,
+            Test1Version: BitConverter.ToInt32(MemoryStorageInitialData.Values[0]),
+            Test1Data: MemoryStorageInitialData.Values[0][4..],
+            Test2Version: BitConverter.ToInt32(MemoryStorageInitialData.Values[1]),
+            Test2Data: MemoryStorageInitialData.Values[1][4..],
+            Test3Size: MemoryStorageInitialData.Values[0].Length + MemoryStorageInitialData.Values[1].Length - 8,
             Test4Data: Test4Data,
             Test4Data2: Test4Data2,
-            Test5Version: BitConverter.ToInt32(MemoryStorageWithInitialData.Values[2]),
-            Test5Data: MemoryStorageWithInitialData.Values[2][4..],
-            Test5Version2: 2,
-            Test5Data2: Test4Data2
+            Test5Data: [new KeyValue(20120103, 0, [9, 8, 0, 5, 6, 9, 0]), new KeyValue(20120104, 0, [1, 2, 5, 4, 6, 7, 2, 4, 5])],
+            Test6Version: BitConverter.ToInt32(MemoryStorageInitialData.Values[2]),
+            Test6Data: MemoryStorageInitialData.Values[2][4..],
+            Test6Version2: 2,
+            Test6Data2: Test4Data2,
+            Test6Version3: 1,
+            Test6Version4: 1
         ));
     }
-    
 
-    public void TestGetSet(TimeSeriesGetSetTestData testData)
+    private static TimeSeriesStorage CreateGetSetStorage(Logger logger, TimeSeriesGetSetTestData testData,
+        IKeyValueStorage storageInterface)
     {
-        Storage = new TimeSeriesStorage(new ConsoleLogger("test", null, LogLevel.Error), new ServerConfigurationParameters(
-            new Dictionary<string, Type> {{"MemoryStorageWithInitialData", typeof(MemoryStorageWithInitialData)}},
+        return new TimeSeriesStorage(logger, new ServerConfigurationParameters(
+            new Dictionary<string, Type>(),
             new Dictionary<string, JsonElement>
             {
-                {"storageInterface", JsonSerializer.SerializeToElement("MemoryStorageWithInitialData")},
-                {"versionedStorage", JsonSerializer.SerializeToElement(testData.Versioned)},
-                {"storageWriteBackInterval", JsonSerializer.SerializeToElement(testData.WriteBackInterval)},
-                {"storageDatabaseParameters", JsonSerializer.SerializeToElement(
-                    new Dictionary<string, TimeSeriesDatabaseParametersRecord>()
-                    {
-                        {"db1", new TimeSeriesDatabaseParametersRecord(testData.MaximumMemoryUsage, MinDate, NumDaysFromNow)},
-                        {"db2", new TimeSeriesDatabaseParametersRecord(testData.MaximumMemoryUsage, MinDate, NumDaysFromNow)}
-                    })}
-            }));
-        var storage = (TimeSeriesStorage)Storage;
+                { "versionedStorage", JsonSerializer.SerializeToElement(testData.Versioned) },
+                { "storageWriteBackInterval", JsonSerializer.SerializeToElement(testData.WriteBackInterval) },
+                {
+                    "storageDatabaseParameters", JsonSerializer.SerializeToElement(
+                        new Dictionary<string, TimeSeriesDatabaseParametersRecord>
+                        {
+                            {
+                                "db1",
+                                new TimeSeriesDatabaseParametersRecord(testData.MaximumMemoryUsage, MinDate,
+                                    NumDaysFromNow)
+                            },
+                            {
+                                "db2",
+                                new TimeSeriesDatabaseParametersRecord(testData.MaximumMemoryUsage, MinDate,
+                                    NumDaysFromNow)
+                            }
+                        })
+                }
+            }), storageInterface);
+    }
+
+    private void TestGetSet(TimeSeriesGetSetTestData testData)
+    {
+        var logger = new ConsoleLogger("test", null, LogLevel.Error);
+        var storageInterface = new MemoryStorage(logger, new ServerConfigurationParameters(
+            new Dictionary<string, Type>(),
+            new Dictionary<string, JsonElement>()));
+        MemoryStorageInitialData.InitStorage(storageInterface);
+        var storage = CreateGetSetStorage(logger, testData, storageInterface);
         Assert.That(storage.GetTotalSize("db1"), Is.EqualTo(0));
         Assert.That(storage.GetTotalSize("db2"), Is.EqualTo(0));
         // test 1
@@ -158,14 +196,29 @@ public sealed class TimeSeriesStorageTest(): GenericKeyValueStorageTest<TimeSeri
         Assert.That(storage.GetTotalSize("db2"), 
             Is.EqualTo(testData.Test4Data2.Length));
         // test 5
-        (dbInfo, result) = storage.Get("db2", 20120101, 20120102);
-        resultList = result.ToList();
-        dbInfo.ExitReadLock();
-        Assert.That(resultList.Count, Is.EqualTo(2));
-        Assert.That(resultList[0], Is.EqualTo(new KeyValue(20120101, testData.Test5Version, testData.Test5Data)));
-        Assert.That(resultList[1], Is.EqualTo(new KeyValue(20120102, testData.Test5Version2, testData.Test5Data2)));
+        dbInfo = storage.Set("db2", 1, testData.Test5Data, null);
+        dbInfo.ExitWriteLock();
+        Assert.That(storage.GetTotalSize("db2"), 
+            Is.EqualTo(testData.Test4Data2.Length + testData.Test5Data[0].Value.Length + testData.Test5Data[1].Value.Length));
+        Test6(storage, testData);
+        storage.Dispose();
+        storage = CreateGetSetStorage(logger, testData, storageInterface);
+        Test6(storage, testData);
     }
-    
+
+    private void Test6(TimeSeriesStorage storage, TimeSeriesGetSetTestData testData)
+    {
+        // test 6
+        var (dbInfo, result) = storage.Get("db2", 20120101, 20120104);
+        var resultList = result.ToList();
+        dbInfo.ExitReadLock();
+        Assert.That(resultList.Count, Is.EqualTo(4));
+        Assert.That(resultList[0], Is.EqualTo(new KeyValue(20120101, testData.Test6Version, testData.Test6Data)));
+        Assert.That(resultList[1], Is.EqualTo(new KeyValue(20120102, testData.Test6Version2, testData.Test6Data2)));
+        Assert.That(resultList[2], Is.EqualTo(new KeyValue(20120103, testData.Test6Version3, testData.Test5Data[0].Value)));
+        Assert.That(resultList[3], Is.EqualTo(new KeyValue(20120104, testData.Test6Version4, testData.Test5Data[1].Value)));
+    }
+
     [Test]
     public void TestStorageWithoutWriteBackAndVersioning()
     {
@@ -197,7 +250,7 @@ public sealed class TimeSeriesStorageTest(): GenericKeyValueStorageTest<TimeSeri
                 {"versionedStorage", JsonSerializer.SerializeToElement(true)},
                 {"storageWriteBackInterval", JsonSerializer.SerializeToElement(0)},
                 {"storageDatabaseParameters", JsonSerializer.SerializeToElement(
-                    new Dictionary<string, TimeSeriesDatabaseParametersRecord>()
+                    new Dictionary<string, TimeSeriesDatabaseParametersRecord>
                     {
                         {"db1", new TimeSeriesDatabaseParametersRecord(100 * 1024, MinDate, NumDaysFromNow)},
                         {"db2", new TimeSeriesDatabaseParametersRecord(100 * 1024, MinDate, NumDaysFromNow)}
@@ -207,7 +260,7 @@ public sealed class TimeSeriesStorageTest(): GenericKeyValueStorageTest<TimeSeri
     }
 
     [Test]
-    public void TestStorageWithWriteBack()
+    public void TestStorageWithoutVersioningAndWithWriteBack()
     {
         Storage = new TimeSeriesStorage(new ConsoleLogger("test", null, LogLevel.Error), new ServerConfigurationParameters(
             new Dictionary<string, Type> {{"MemoryStorage", typeof(MemoryStorage)}},

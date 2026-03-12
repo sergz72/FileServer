@@ -324,11 +324,9 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
     public KeyValue Get(int date, string? propertyName)
     {
         var key = _parameters.DateToKey(date);
-        var difference = 0;
         var result = _entries[key]?.Get(DbName, _parameters.Versioned, _parameters.StorageInterface,
-                         propertyName, _lru, ref difference)
+                         propertyName, _lru, ref _totalSize)
                ?? throw new Exception($"item {DbName} {date} {propertyName} not found");
-        Interlocked.Add(ref _totalSize, difference);
         return result;
     }
 
@@ -372,11 +370,20 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
     }
 }
 
-public sealed class TimeSeriesStorage(Logger logger, ServerConfigurationParameters parameters): 
-    GenericKeyValueStorage<TimeSeriesDatabaseInfo>(logger, parameters, InitOthers)
+public sealed class TimeSeriesStorage: GenericKeyValueStorage<TimeSeriesDatabaseInfo>
 {
     private Dictionary<string, TimeSeriesDatabaseParameters> _databaseParameters = null!;
 
+    public TimeSeriesStorage(Logger logger, ServerConfigurationParameters parameters, IKeyValueStorage? storageInterface): 
+        base(logger, parameters, storageInterface, InitOthers)
+    {
+    }
+    
+    public TimeSeriesStorage(Logger logger, ServerConfigurationParameters parameters):
+        base(logger, parameters, null, InitOthers)
+    {
+    }
+        
     private static void InitOthers(GenericKeyValueStorage<TimeSeriesDatabaseInfo> instance, Logger logger, ServerConfigurationParameters parameters)
     {
         var i = (TimeSeriesStorage)instance;
