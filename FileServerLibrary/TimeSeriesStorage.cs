@@ -68,13 +68,22 @@ internal sealed class TimeSeriesEntry
             if (value != null)
                 return value.GetValue(lru);
 
-            var data = storageInterface.Get(new KeyValueStorageKey(dbName, Date, propertyName));
-            if (data == null) throw new Exception($"item {dbName} {Date} {propertyName} not found");
-            var kv = KeyValue.ReadData(Date, data, versioned);
-            size += kv.Value.Length;
-            Values[pName] = new TimeSeriesEntryValue(kv, lru, this, pName);
-            return kv;
+            var e = GetFromStorage(dbName, versioned, storageInterface, propertyName, lru, ref size);
+            return e.Value;
         }
+    }
+
+    internal TimeSeriesEntryValue GetFromStorage(string dbName, bool versioned, IKeyValueStorage storageInterface,
+        string? propertyName, Lru<LruItem> lru, ref int size)
+    {
+        var data = storageInterface.Get(new KeyValueStorageKey(dbName, Date, propertyName));
+        if (data == null) throw new Exception($"item {dbName} {Date} {propertyName} not found");
+        var kv = KeyValue.ReadData(Date, data, versioned);
+        size += kv.Value.Length;
+        var pName = propertyName ?? "";
+        var e = new TimeSeriesEntryValue(kv, lru, this, pName);
+        Values[pName] = e;
+        return e;
     }
 }
 
@@ -282,8 +291,12 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
         var pName = propertyName ?? "";
         var key = _parameters.DateToKey(date);
         var entry = _entries[key];
-        if (entry != null && entry.Values.TryGetValue(pName, out var value) && value != null)
+        if (entry != null && entry.Values.TryGetValue(pName, out var value))
+        {
+            value ??= entry.GetFromStorage(DbName, _parameters.Versioned, _parameters.StorageInterface, propertyName,
+                _lru, ref _totalSize);
             _totalSize += value.SetData(updateFunc(value.Value.Value), _parameters.Versioned, _lru);
+        }
         else
         {
             if (entry == null)
@@ -341,7 +354,6 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
     {
         if (_totalSize <= _parameters.MaximumMemoryUsage) return;
         if (enterWriteLock) EnterWriteLock();
-        _lru.Lock();
         try
         {
             var toRemove = new List<LinkedListNode<LruItem>>();
@@ -359,7 +371,6 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
         }
         finally
         {
-            _lru.Unlock();
             if (enterWriteLock) ExitWriteLock();
         }
     }
