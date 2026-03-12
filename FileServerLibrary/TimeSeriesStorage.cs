@@ -270,39 +270,42 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
         }
     }
 
+    private void Set(int date, string? propertyName, Func<byte[]> addFunc, Func<byte[], byte[]> updateFunc)
+    {
+        var pName = propertyName ?? "";
+        var key = _parameters.DateToKey(date);
+        var entry = _entries[key];
+        if (entry != null && entry.Values.TryGetValue(pName, out var value) && value != null)
+            _totalSize += value.SetData(updateFunc(value.Value.Value), _parameters.Versioned, _lru);
+        else
+        {
+            if (entry == null)
+            {
+                entry = new TimeSeriesEntry(date, []);
+                _entries[key] = entry;
+            }
+            value = new TimeSeriesEntryValue(new KeyValue(date, _parameters.Versioned ? 1 : 0, addFunc()),
+                _lru, entry, pName);
+            _totalSize += value.Value.Value.Length;
+            entry.Values[pName] = value;
+        }
+        if (!_parameters.WriteBack)
+            _parameters.StorageInterface.Set(new KeyValueStorageKey(DbName, date, propertyName),
+                value.Value.BuildData(_parameters.Versioned));
+        else
+        {
+            value.SetDirty(true);
+            _dirtyKeys.Add(new KeyValueStorageShortKey(key, propertyName));
+        }
+    }
+
     public void AddOrUpdate(int date, string? propertyName, Func<byte[]> addFunc, Func<byte[], byte[]> updateFunc)
     {
-        var key = _parameters.DateToKey(date);
-        var pName = propertyName ?? "";
         EnterWriteLock();
         try
         {
             Cleanup(false);
-            int difference;
-            var entry = _entries[key];
-            if (entry != null && entry.Values.TryGetValue(pName, out var value) && value != null)
-                difference = value.SetData(updateFunc(value.Value.Value), _parameters.Versioned, _lru);
-            else
-            {
-                if (entry == null)
-                {
-                    entry = new TimeSeriesEntry(date, []);
-                    _entries[key] = entry;
-                }
-                value = new TimeSeriesEntryValue(new KeyValue(date, _parameters.Versioned ? 1 : 0, addFunc()),
-                    _lru, entry, pName);
-                difference = value.Value.Value.Length;
-                entry.Values[pName] = value;
-            }
-            if (!_parameters.WriteBack)
-                _parameters.StorageInterface.Set(new KeyValueStorageKey(DbName, date, propertyName),
-                    value.Value.BuildData(_parameters.Versioned));
-            else
-            {
-                value.SetDirty(true);
-                _dirtyKeys.Add(new KeyValueStorageShortKey(key, propertyName));
-            }
-            _totalSize += difference;
+            Set(date, propertyName, addFunc, updateFunc);
         }
         catch
         {
@@ -325,35 +328,8 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
     public void Set(List<KeyValue> data, string? propertyName)
     {
         Cleanup(false);
-        var pName = propertyName ?? "";
         foreach (var kv in data)
-        {
-            var key = _parameters.DateToKey(kv.Key);
-            var entry = _entries[key];
-            if (entry != null && entry.Values.TryGetValue(pName, out var value) && value != null)
-                _totalSize += value.SetData(kv.Value, _parameters.Versioned, _lru);
-            else
-            {
-                if (entry == null)
-                {
-                    entry = new TimeSeriesEntry(kv.Key, []);
-                    _entries[key] = entry;
-                }
-                value = new TimeSeriesEntryValue(_parameters.Versioned ? kv with { Version = 1 } : kv, _lru, entry,
-                    pName);
-                _totalSize += value.Value.Value.Length;
-                entry.Values[pName] = value;
-            }
-
-            if (!_parameters.WriteBack)
-                _parameters.StorageInterface.Set(new KeyValueStorageKey(DbName, kv.Key, propertyName),
-                    value.Value.BuildData(_parameters.Versioned));
-            else
-            {
-                value.SetDirty(true);
-                _dirtyKeys.Add(new KeyValueStorageShortKey(key, propertyName));
-            }
-        }
+            Set(kv.Key, propertyName, () => kv.Value, _ => kv.Value);
     }
 
     public override void Cleanup(bool enterWriteLock)
@@ -382,23 +358,30 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
             if (enterWriteLock) ExitWriteLock();
         }
     }
+
+    public int GetTotalSize()
+    {
+        return _totalSize;
+    }
 }
 
-public sealed class TimeSeriesStorage: GenericKeyValueStorage<TimeSeriesDatabaseInfo>
+public sealed class TimeSeriesStorage(Logger logger, ServerConfigurationParameters parameters): 
+    GenericKeyValueStorage<TimeSeriesDatabaseInfo>(logger, parameters, InitOthers)
 {
-    private readonly Dictionary<string, TimeSeriesDatabaseParameters> _databaseParameters;
-    
-    public TimeSeriesStorage(Logger logger, ServerConfigurationParameters parameters): base(logger, parameters)
+    private Dictionary<string, TimeSeriesDatabaseParameters> _databaseParameters = null!;
+
+    private static void InitOthers(GenericKeyValueStorage<TimeSeriesDatabaseInfo> instance, Logger logger, ServerConfigurationParameters parameters)
     {
+        var i = (TimeSeriesStorage)instance;
         var databaseParameters = parameters.GetParameter<Dictionary<string, TimeSeriesDatabaseParametersRecord>>("storageDatabaseParameters");
         var defaultParameters = databaseParameters.GetValueOrDefault("default");
-        _databaseParameters = databaseParameters
+        i._databaseParameters = databaseParameters
             .Where(kv => kv.Key != "default")
             .ToDictionary(kv => kv.Key,
-                kv => new TimeSeriesDatabaseParameters(kv.Value, kv.Key, defaultParameters, StorageInterface,
-                    StorageLogger, Versioned, WriteBackInterval > 0));
+                kv => new TimeSeriesDatabaseParameters(kv.Value, kv.Key, defaultParameters, i.StorageInterface,
+                    i.StorageLogger, i.Versioned, i.WriteBackInterval > 0));
     }
-
+    
     protected override TimeSeriesDatabaseInfo CreateDatabaseInfo(string dbName, IEnumerable<KeyValueStorageShortKey> existingKeys)
     {
         var parameters = _databaseParameters.TryGetValue(dbName, out var dbParameters)
@@ -440,5 +423,10 @@ public sealed class TimeSeriesStorage: GenericKeyValueStorage<TimeSeriesDatabase
     protected override KeyValue Get(TimeSeriesDatabaseInfo dbInfo, int key, string? propertyName)
     {
         return dbInfo.Get(key, propertyName);
+    }
+
+    public int GetTotalSize(string dbName)
+    {
+        return DbInfo[dbName].GetTotalSize();
     }
 }

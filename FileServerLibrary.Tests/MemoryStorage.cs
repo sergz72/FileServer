@@ -6,32 +6,32 @@ namespace FileServerLibrary.Tests;
 
 public class MemoryStorage: IKeyValueStorage
 {
-    private readonly ConcurrentDictionary<KeyValueStorageKey, byte[]> _storage = new ();
-    private readonly Logger _logger;
+    protected readonly ConcurrentDictionary<KeyValueStorageKey, byte[]> Storage = new ();
+    protected readonly Logger Log;
 
     public MemoryStorage(Logger logger, ServerConfigurationParameters parameters)
     {
-        _logger = logger;
+        Log = logger;
     }
     
 
     public byte[]? Get(KeyValueStorageKey key)
     {
-        return _storage.GetValueOrDefault(key);
+        return Storage.GetValueOrDefault(key);
     }
 
     public void Set(KeyValueStorageKey key, byte[] value)
     {
-        _storage[key] = value;
+        Storage[key] = value;
     }
 
     public void Delete(KeyValueStorageKey key)
     {
-        _storage.Remove(key, out _);
+        Storage.Remove(key, out _);
     }
 
     public List<KeyValueStorageKey> GetKeys()
     {
-        return _storage.Keys.ToList();
+        return Storage.Keys.ToList();
     }
 }
