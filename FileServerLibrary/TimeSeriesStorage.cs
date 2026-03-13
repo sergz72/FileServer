@@ -43,7 +43,6 @@ internal sealed class TimeSeriesEntry
 {
     internal readonly Dictionary<string, TimeSeriesEntryValue?> Values;
     internal readonly int Date;
-    private readonly Lock _lock;
 
     internal TimeSeriesEntry(int date, HashSet<string> values)
     {
@@ -51,17 +50,17 @@ internal sealed class TimeSeriesEntry
         Values = values
             .Select<string, (string, TimeSeriesEntryValue?)>(v => (v, null))
             .ToDictionary();
-        _lock = new Lock();
     }
 
     internal KeyValue? Get(string dbName, bool versioned, IKeyValueStorage storageInterface, string? propertyName,
-        Lru<LruItem> lru, ref int size)
+        Lru<LruItem> lru, ref int size, TimeSeriesDatabaseInfo info)
     {
         var pName = propertyName ?? ""; 
         if (!Values.TryGetValue(pName, out var value)) return null;
         if (value != null)
             return value.GetValue(lru);
-        using (_lock.EnterScope())
+        info.EnterWriteLock();
+        try
         {
             if (!Values.TryGetValue(pName, out value)) return null;
             if (value != null)
@@ -69,6 +68,10 @@ internal sealed class TimeSeriesEntry
 
             var e = GetFromStorage(dbName, versioned, storageInterface, propertyName, lru, ref size);
             return e.Value;
+        }
+        finally
+        {
+            info.ExitWriteLock();
         }
     }
 
@@ -249,7 +252,7 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
         {
             var result = Enumerable.Range(fromKey, toKey - fromKey + 1)
                 .Select(i => _entries[i]?.Get(DbName, _parameters.Versioned, _parameters.StorageInterface,
-                    propertyName, _lru, ref _totalSize))
+                    propertyName, _lru, ref _totalSize, this))
                 .Where(kv => kv != null)
                 .Cast<KeyValue>();
             return result;
@@ -272,7 +275,7 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
             var result = Enumerable.Range(fromKey, toKey - fromKey + 1)
                 .Reverse()
                 .Select(i => _entries[i]?.Get(DbName, _parameters.Versioned, _parameters.StorageInterface,
-                    propertyName, _lru, ref _totalSize))
+                    propertyName, _lru, ref _totalSize, this))
                 .FirstOrDefault(kv => kv != null);
             return result;
         }
@@ -332,7 +335,7 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
     {
         var key = _parameters.DateToKey(date);
         var result = _entries[key]?.Get(DbName, _parameters.Versioned, _parameters.StorageInterface,
-                         propertyName, _lru, ref _totalSize)
+                         propertyName, _lru, ref _totalSize, this)
                ?? throw new Exception($"item {DbName} {date} {propertyName} not found");
         return result;
     }
@@ -383,6 +386,9 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
     {
         Cleanup(false, 0);
     }
+    
+    internal override void EnterReadLock() => Lock.EnterUpgradeableReadLock();
+    public override void ExitReadLock() => Lock.ExitUpgradeableReadLock();
 }
 
 public sealed class TimeSeriesStorage: GenericKeyValueStorage<TimeSeriesDatabaseInfo>

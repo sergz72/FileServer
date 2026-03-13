@@ -24,7 +24,7 @@ public abstract class GenericKeyValueStorageTest<T> where T: DatabaseInfo
     
     private volatile bool _stop;
 
-    public GenericKeyValueStorageTest(int minKey, int maxKey)
+    protected GenericKeyValueStorageTest(int minKey, int maxKey)
     {
         MinKey = minKey;
         MaxKey = maxKey;

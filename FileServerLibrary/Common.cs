@@ -252,17 +252,17 @@ public sealed class ChaCha20CryptoPlugin: ICryptoPlugin
 
 public class DatabaseInfo
 {
-    private readonly ReaderWriterLockSlim _lock = new();
+    protected readonly ReaderWriterLockSlim Lock = new();
     
     public readonly string DbName;
     
     public int DbVersion { get; private set; } = 1;
     
-    internal void EnterReadLock() => _lock.EnterReadLock();
-    internal void EnterWriteLock() => _lock.EnterWriteLock();
-    public void ExitReadLock() => _lock.ExitReadLock();
-    public void ExitWriteLock() => _lock.ExitWriteLock();
-
+    internal virtual void EnterReadLock() => Lock.EnterReadLock();
+    internal void EnterWriteLock() => Lock.EnterWriteLock();
+    public virtual void ExitReadLock() => Lock.ExitReadLock();
+    public void ExitWriteLock() => Lock.ExitWriteLock();
+    
     public DatabaseInfo(string dbName)
     {
         DbName = dbName;

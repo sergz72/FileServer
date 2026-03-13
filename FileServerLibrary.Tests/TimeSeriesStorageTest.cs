@@ -288,6 +288,10 @@ public sealed class TimeSeriesStorageTest(): GenericKeyValueStorageTest<TimeSeri
                     })}
             }));
         PerformTests(10, 6000, false);
+        var storage = (TimeSeriesStorage) Storage;
+        storage.FreeMemory();
+        Assert.That(storage.GetTotalSize("db1"), Is.EqualTo(0));
+        Assert.That(storage.GetTotalSize("db2"), Is.EqualTo(0));
     }
 
     protected override int GetRandomKey()
