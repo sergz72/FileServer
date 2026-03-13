@@ -9,7 +9,7 @@ namespace FileServerLibrary.Tests;
 
 internal static class MemoryStorageInitialData
 {
-    internal static readonly KeyValueStorageKey[] Keys =
+    private static readonly KeyValueStorageKey[] Keys =
     [
         new ("db1", 20120101, null),
         new ("db1", 20120101, "aggregated"),
@@ -86,7 +86,7 @@ public sealed class TimeSeriesStorageTest(): GenericKeyValueStorageTest<TimeSeri
         TestGetSetNotVersioned(100);
     }
     
-    public void TestGetSetNotVersioned(int writeBackInterval)
+    private void TestGetSetNotVersioned(int writeBackInterval)
     {
         TestGetSet(new TimeSeriesGetSetTestData(
             Versioned: false,
@@ -196,12 +196,15 @@ public sealed class TimeSeriesStorageTest(): GenericKeyValueStorageTest<TimeSeri
         Assert.That(storage.GetTotalSize("db2"), 
             Is.EqualTo(testData.Test4Data2.Length));
         // test 5
-        dbInfo = storage.Set("db2", 1, testData.Test5Data, null);
+        dbInfo = storage.Set("db2", 1, testData.Test5Data);
         dbInfo.ExitWriteLock();
         Assert.That(storage.GetTotalSize("db2"), 
             Is.EqualTo(testData.Test4Data2.Length + testData.Test5Data[0].Value.Length + testData.Test5Data[1].Value.Length));
         Test6(storage, testData);
         storage.Dispose();
+        storage.FreeMemory();
+        Assert.That(storage.GetTotalSize("db1"), Is.EqualTo(0));
+        Assert.That(storage.GetTotalSize("db2"), Is.EqualTo(0));
         storage = CreateGetSetStorage(logger, testData, storageInterface);
         Test6(storage, testData);
     }
@@ -237,6 +240,10 @@ public sealed class TimeSeriesStorageTest(): GenericKeyValueStorageTest<TimeSeri
                     })}
             }));
         PerformTests(10, 2000, false);
+        var storage = (TimeSeriesStorage) Storage;
+        storage.FreeMemory();
+        Assert.That(storage.GetTotalSize("db1"), Is.EqualTo(0));
+        Assert.That(storage.GetTotalSize("db2"), Is.EqualTo(0));
     }
 
     [Test]
@@ -257,6 +264,10 @@ public sealed class TimeSeriesStorageTest(): GenericKeyValueStorageTest<TimeSeri
                     })}
             }));
         PerformTests(10, 2000, true);
+        var storage = (TimeSeriesStorage) Storage;
+        storage.FreeMemory();
+        Assert.That(storage.GetTotalSize("db1"), Is.EqualTo(0));
+        Assert.That(storage.GetTotalSize("db2"), Is.EqualTo(0));
     }
 
     [Test]

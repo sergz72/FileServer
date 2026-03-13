@@ -17,7 +17,6 @@ internal sealed class TimeSeriesEntryValue
     public int SetData(byte[] newData, bool versioned, Lru<LruItem> lru)
     {
         UpdateLru(lru);
-        IsDirty = true;
         var difference = newData.Length - Value.Value.Length;
         Value = new KeyValue(Value.Key, versioned ? Value.Version + 1 : 0, newData);
         return difference;
@@ -240,7 +239,7 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
         }
     }
 
-    public IEnumerable<KeyValue> Get(int from, int to, string? propertyName)
+    internal IEnumerable<KeyValue> Get(int from, int to, string? propertyName)
     {
         Cleanup(true);
         var fromKey = _parameters.DateToKey(from);
@@ -262,7 +261,7 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
         }
     }
 
-    public KeyValue? GetLast(int from, int to, string? propertyName)
+    internal KeyValue? GetLast(int from, int to, string? propertyName)
     {
         Cleanup(true);
         var fromKey = _parameters.DateToKey(from);
@@ -270,13 +269,11 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
         EnterReadLock();
         try
         {
-            var difference = 0;
             var result = Enumerable.Range(fromKey, toKey - fromKey + 1)
                 .Reverse()
                 .Select(i => _entries[i]?.Get(DbName, _parameters.Versioned, _parameters.StorageInterface,
-                    propertyName, _lru, ref difference))
+                    propertyName, _lru, ref _totalSize))
                 .FirstOrDefault(kv => kv != null);
-            Interlocked.Add(ref _totalSize, difference);
             return result;
         }
         catch
@@ -299,11 +296,8 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
         }
         else
         {
-            if (entry == null)
-            {
-                entry = new TimeSeriesEntry(date, []);
-                _entries[key] = entry;
-            }
+            entry = new TimeSeriesEntry(date, []);
+            _entries[key] = entry;
             value = new TimeSeriesEntryValue(new KeyValue(date, _parameters.Versioned ? 1 : 0, addFunc()),
                 _lru, entry, pName);
             _totalSize += value.Value.Value.Length;
@@ -319,7 +313,7 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
         }
     }
 
-    public void AddOrUpdate(int date, string? propertyName, Func<byte[]> addFunc, Func<byte[], byte[]> updateFunc)
+    internal void AddOrUpdate(int date, string? propertyName, Func<byte[]> addFunc, Func<byte[], byte[]> updateFunc)
     {
         EnterWriteLock();
         try
@@ -334,7 +328,7 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
         }
     }
 
-    public KeyValue Get(int date, string? propertyName)
+    internal KeyValue Get(int date, string? propertyName)
     {
         var key = _parameters.DateToKey(date);
         var result = _entries[key]?.Get(DbName, _parameters.Versioned, _parameters.StorageInterface,
@@ -343,7 +337,7 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
         return result;
     }
 
-    public void Set(List<KeyValue> data, string? propertyName)
+    internal void Set(List<KeyValue> data, string? propertyName)
     {
         Cleanup(false);
         foreach (var kv in data)
@@ -352,14 +346,19 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
 
     public override void Cleanup(bool enterWriteLock)
     {
-        if (_totalSize <= _parameters.MaximumMemoryUsage) return;
+        Cleanup(enterWriteLock, _parameters.MaximumMemoryUsage);
+    }
+
+    private void Cleanup(bool enterWriteLock, int max)
+    {
+        if (_totalSize <= max) return;
         if (enterWriteLock) EnterWriteLock();
         try
         {
             var toRemove = new List<LinkedListNode<LruItem>>();
             _lru.ReverseForEach(item =>
             {
-                if (_totalSize <= _parameters.MaximumMemoryUsage) return true;
+                if (_totalSize <= max) return true;
                 if (item.Value.Value.IsDirty) return false;
                 _totalSize -= item.Value.Value.Value.Value.Length;
                 item.Value.Entry.Values[item.Value.PropertyName] = null;
@@ -378,6 +377,11 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
     public int GetTotalSize()
     {
         return _totalSize;
+    }
+
+    internal void FreeMemory()
+    {
+        Cleanup(false, 0);
     }
 }
 
@@ -453,5 +457,11 @@ public sealed class TimeSeriesStorage: GenericKeyValueStorage<TimeSeriesDatabase
     public int GetTotalSize(string dbName)
     {
         return DbInfo[dbName].GetTotalSize();
+    }
+    
+    public void FreeMemory()
+    {
+        foreach (var dbInfo in DbInfo.Values)
+            dbInfo.FreeMemory();
     }
 }
