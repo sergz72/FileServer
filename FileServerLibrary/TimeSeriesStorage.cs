@@ -37,6 +37,11 @@ internal sealed class TimeSeriesEntryValue
     {
         IsDirty = dirty;
     }
+    
+    internal void RemoveFromLru(Lru<LruItem> lru)
+    {
+        lru.Remove(_node);
+    }
 }
 
 internal sealed class TimeSeriesEntry
@@ -86,6 +91,17 @@ internal sealed class TimeSeriesEntry
         var e = new TimeSeriesEntryValue(kv, lru, this, pName);
         Values[pName] = e;
         return e;
+    }
+
+    public int Delete(string dbName, IKeyValueStorage storageInterface, string? propertyName, Lru<LruItem> lru)
+    {
+        var pName = propertyName ?? "";
+        var value = Values[pName]!;
+        value.RemoveFromLru(lru);
+        var size = value.Value.Value.Length;
+        Values.Remove(pName);
+        storageInterface.Delete(new KeyValueStorageKey(dbName, Date, propertyName));
+        return size;
     }
 }
 
@@ -295,13 +311,23 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
         {
             value ??= entry.GetFromStorage(DbName, _parameters.Versioned, _parameters.StorageInterface, propertyName,
                 _lru, ref _totalSize);
-            _totalSize += value.SetData(updateFunc(value.Value.Value), _parameters.Versioned, _lru);
+            var data = updateFunc(value.Value.Value);
+            if (data.Length == 0)
+            {
+                _totalSize -= entry.Delete(DbName, _parameters.StorageInterface, propertyName, _lru);
+                if (_parameters.WriteBack)
+                    _dirtyKeys.Remove(new KeyValueStorageShortKey(key, propertyName));
+                return;
+            }
+            _totalSize += value.SetData(data, _parameters.Versioned, _lru);
         }
         else
         {
+            var data = addFunc();
+            if (data.Length == 0) throw new Exception($"Set {DbName} {date} {propertyName} - addFunc returned no data");
             entry = new TimeSeriesEntry(date, []);
             _entries[key] = entry;
-            value = new TimeSeriesEntryValue(new KeyValue(date, _parameters.Versioned ? 1 : 0, addFunc()),
+            value = new TimeSeriesEntryValue(new KeyValue(date, _parameters.Versioned ? 1 : 0, data),
                 _lru, entry, pName);
             _totalSize += value.Value.Value.Length;
             entry.Values[pName] = value;

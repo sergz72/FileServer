@@ -15,6 +15,11 @@ public sealed class KeyValueDatabaseInfo(string dbName, SortedSet<KeyValueStorag
     {
         existingKeys.Add(new KeyValueStorageShortKey(cacheKey.Key, cacheKey.PropertyName));
     }
+
+    public void RemoveKey(KeyValueStorageKey cacheKey)
+    {
+        existingKeys.Remove(new KeyValueStorageShortKey(cacheKey.Key, cacheKey.PropertyName));
+    }
 }
 
 internal record KeyValueStorageCacheValue(KeyValue Value, bool Dirty);
@@ -140,6 +145,13 @@ public sealed class KeyValueStorage: GenericKeyValueStorage<KeyValueDatabaseInfo
 
     private void Set(KeyValueDatabaseInfo dbInfo, KeyValueStorageKey cacheKey, KeyValue kv)
     {
+        if (kv.Value.Length == 0) // delete
+        {
+            _cache.Remove(cacheKey);
+            dbInfo.RemoveKey(cacheKey);
+            StorageInterface.Delete(cacheKey);
+            return;
+        }
         var exists = TryGet(cacheKey, out var oldValue);
         var newKv = kv with { Version = Versioned ? (exists ? oldValue!.Value.Version + 1 : 1) : 0 };
         _cache.Set(cacheKey,

@@ -84,7 +84,7 @@ public abstract class GenericKeyValueStorageTest<T> where T: DatabaseInfo
         {
             Interlocked.Increment(ref NumOperations);
             var from = GetRandomKey();
-            switch (RandomNumberGenerator.GetInt32(0, versioned ? 6 : 5))
+            switch (RandomNumberGenerator.GetInt32(0, versioned ? 7 : 6))
             {
                 //Get
                 case 0:
@@ -103,28 +103,58 @@ public abstract class GenericKeyValueStorageTest<T> where T: DatabaseInfo
                 case 4:
                     AddOrUpdate(GetRandomDbName(), null, null, versioned);
                     break;
+                case 5:
+                    Delete();
+                    break;
                 default:
                     GetFileVersionCheck();
                     break;
             }
         }
     }
+    
+    private void Delete()
+    {
+        if (Items.IsEmpty) return;
+        var key = GetExistingKey();
 
+        try
+        {
+            var version = ExpectedVersions[key.DbName];
+            var dbInfo = Storage!.Set(key.DbName, version, [new KeyValue(key.Key, 0, [])]);
+            ExpectedVersions[key.DbName] = version + 1;
+            Items.Remove(key, out var _);
+            dbInfo.ExitWriteLock();
+        }
+        finally
+        {
+            WriteLock.Exit();
+        }
+    }
+
+    protected KeyValueStorageKey GetExistingKey()
+    {
+        WriteLock.Enter();
+        var idx = RandomNumberGenerator.GetInt32(0, Items.Count);
+        return Items.ElementAt(idx).Key;
+    }
+    
     protected void AddOrUpdate(string dbName, int? key, string? propertyName, bool versioned)
     {
         if (key == null)
         {
             if (Items.IsEmpty) return;
-            WriteLock.Enter();
-            var idx = RandomNumberGenerator.GetInt32(0, Items.Count);
-            key = Items.ElementAt(idx).Key.Key;
+            var k = GetExistingKey();
+            key = k.Key;
+            propertyName = k.PropertyName;
+            dbName = k.DbName;
         }
         else
             WriteLock.Enter();
 
         try
         {
-            var newData = RandomNumberGenerator.GetBytes(RandomNumberGenerator.GetInt32(0, 100)); 
+            var newData = RandomNumberGenerator.GetBytes(RandomNumberGenerator.GetInt32(1, 100)); 
             var dbInfo = Storage!.AddOrUpdate(dbName, (int)key, propertyName, () => newData, _ => newData);
             var kv = new KeyValue((int)key, versioned ? 1 : 0, newData);
             Items.AddOrUpdate(new KeyValueStorageKey(dbName, (int)key, propertyName), kv,
@@ -144,9 +174,10 @@ public abstract class GenericKeyValueStorageTest<T> where T: DatabaseInfo
         int version, expectedVersion;
         try
         {
+            if (Items.IsEmpty) return;
             var idx = RandomNumberGenerator.GetInt32(0, Items.Count);
             var keyValue = Items.ElementAt(idx);
-            (var dbInfo, version) = Storage!.GetFileVersion(keyValue.Key.DbName, keyValue.Key.Key);
+            (var dbInfo, version) = Storage!.GetFileVersion(keyValue.Key.DbName, keyValue.Key.Key, keyValue.Key.PropertyName);
             dbInfo.ExitReadLock();
             expectedVersion = keyValue.Value.Version;
         }
@@ -162,7 +193,7 @@ public abstract class GenericKeyValueStorageTest<T> where T: DatabaseInfo
     protected void Set(string dbName, int from, int to, string? propertyName, bool versioned)
     {
         var toSet = GetKeys(from, to)
-            .Select(i => new KeyValue(i, versioned ? 1 : 0, RandomNumberGenerator.GetBytes(RandomNumberGenerator.GetInt32(0, 100))))
+            .Select(i => new KeyValue(i, versioned ? 1 : 0, RandomNumberGenerator.GetBytes(RandomNumberGenerator.GetInt32(1, 100))))
             .ToList();
         WriteLock.Enter();
         try
