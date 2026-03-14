@@ -145,8 +145,10 @@ public sealed class TimeSeriesDatabaseParameters
     
     internal int DateToKey(int date)
     {
+        if (date == 0) return 0; // special case
+        if (date < 20000101) return 1;
         var day = DateToDayNumber(date);
-        return day > _minDay ? day - _minDay : 0;
+        return day > _minDay ? day - _minDay : 1;
     }
     
     public static int DateToDayNumber(int date) =>
