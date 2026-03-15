@@ -33,7 +33,7 @@ public interface IHandlerPlugin : IPlugin
 
 public interface ICommand
 {
-    byte[] Execute(User user, IStoragePlugin storage, Logger logger);
+    byte[] Execute(User? user, IStoragePlugin storage, Logger logger);
 }
 
 public interface ICryptoPlugin : IPlugin

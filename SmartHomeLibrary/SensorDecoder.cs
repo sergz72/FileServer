@@ -1,8 +1,8 @@
-﻿using FileServerLibrary;
+using FileServerLibrary;
 
 namespace SmartHomeLibrary;
 
-public class SmartHomeDecoder: IDecoderPlugin
+public class SensorDecoder: IDecoderPlugin
 {
     public ICommand Decode(Logger logger, byte[] data)
     {
