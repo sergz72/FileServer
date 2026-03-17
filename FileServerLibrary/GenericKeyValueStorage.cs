@@ -90,7 +90,7 @@ public abstract class GenericKeyValueStorage<T>: IStoragePlugin where T: Databas
         }
     }
     
-    public abstract (DatabaseInfo, IEnumerable<KeyValue>) Get(string dbName, int from, int to, string? propertyName = null);
+    public abstract (DatabaseInfo, IEnumerable<KeyValue>) Get(string dbName, int from, int to, bool reverse, string? propertyName = null);
     
     protected abstract KeyValue Get(T dbinfo, int key, string? propertyName);
     

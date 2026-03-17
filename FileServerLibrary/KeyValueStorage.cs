@@ -5,10 +5,12 @@ namespace FileServerLibrary;
 
 public sealed class KeyValueDatabaseInfo(string dbName, SortedSet<KeyValueStorageShortKey> existingKeys): DatabaseInfo(dbName)
 {
-    public IEnumerable<KeyValueStorageShortKey> GetKeys(int from, int to, string? propertyName = null)
+    public IEnumerable<KeyValueStorageShortKey> GetKeys(int from, int to, bool reverse, string? propertyName = null)
     {
-        return existingKeys.GetViewBetween(new KeyValueStorageShortKey(from, propertyName), new KeyValueStorageShortKey(to, propertyName))
-            .Where(key => key.PropertyName == propertyName);
+        var result =
+            existingKeys.GetViewBetween(new KeyValueStorageShortKey(from, propertyName), new KeyValueStorageShortKey(to, propertyName))
+                .Where(key => key.PropertyName == propertyName);
+        return reverse ? result.Reverse() : result;
     }
 
     public void AddKey(KeyValueStorageKey cacheKey)
@@ -69,13 +71,13 @@ public sealed class KeyValueStorage: GenericKeyValueStorage<KeyValueDatabaseInfo
         }
     }
     
-    public override (DatabaseInfo, IEnumerable<KeyValue>) Get(string dbName, int from, int to, string? propertyName = null)
+    public override (DatabaseInfo, IEnumerable<KeyValue>) Get(string dbName, int from, int to, bool reverse, string? propertyName = null)
     {
         var dbInfo = GetDatabaseInfo(dbName);
         dbInfo.EnterReadLock();
         try
         {
-             return (dbInfo, dbInfo.GetKeys(from, to).Select(key => Get(dbName, key).Value));
+             return (dbInfo, dbInfo.GetKeys(from, to, reverse).Select(key => Get(dbName, key).Value));
         }
         catch
         {
@@ -122,7 +124,7 @@ public sealed class KeyValueStorage: GenericKeyValueStorage<KeyValueDatabaseInfo
         dbInfo.EnterReadLock();
         try
         {
-            var key = dbInfo.GetKeys(from, to).LastOrDefault()?.Key;
+            var key = dbInfo.GetKeys(from, to, true).FirstOrDefault()?.Key;
             return key == null
                 ? (dbInfo, null)
                 : (dbInfo, Get(dbInfo, (int)key, propertyName));

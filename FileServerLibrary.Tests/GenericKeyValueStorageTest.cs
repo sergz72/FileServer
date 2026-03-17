@@ -84,26 +84,30 @@ public abstract class GenericKeyValueStorageTest<T> where T: DatabaseInfo
         {
             Interlocked.Increment(ref NumOperations);
             var from = GetRandomKey();
-            switch (RandomNumberGenerator.GetInt32(0, versioned ? 7 : 6))
+            switch (RandomNumberGenerator.GetInt32(0, versioned ? 8 : 7))
             {
                 //Get
                 case 0:
                     GetCheck(GetRandomDbName(), from, AddToKey(from, RandomNumberGenerator.GetInt32(0, MaxKey)));
                     break;
-                //Get last
+                //Get reverse
                 case 1:
+                    GetCheckReverse(GetRandomDbName(), from, AddToKey(from, RandomNumberGenerator.GetInt32(0, MaxKey)));
+                    break;
+                //Get last
+                case 2:
                     GetLastCheck(GetRandomDbName(), from, AddToKey(from, RandomNumberGenerator.GetInt32(0, MaxKey)));
                     break;
-                case 2:
+                case 3:
                     Set(GetRandomDbName(), from, AddToKey(from, RandomNumberGenerator.GetInt32(0, 10)), null, versioned);
                     break;
-                case 3:
+                case 4:
                     AddOrUpdate(GetRandomDbName(), from, null, versioned);
                     break;
-                case 4:
+                case 5:
                     AddOrUpdate(GetRandomDbName(), null, null, versioned);
                     break;
-                case 5:
+                case 6:
                     Delete();
                     break;
                 default:
@@ -217,7 +221,7 @@ public abstract class GenericKeyValueStorageTest<T> where T: DatabaseInfo
         DatabaseInfo? dbInfo = null;
         try
         {
-            (dbInfo, var result) = Storage!.Get(dbName, from, to, propertyName);
+            (dbInfo, var result) = Storage!.Get(dbName, from, to, false, propertyName);
             var resultList = result.ToList();
             var expected = Items
                 .Where(kv =>
@@ -225,6 +229,32 @@ public abstract class GenericKeyValueStorageTest<T> where T: DatabaseInfo
                     kv.Key.PropertyName == propertyName)
                 .Select(kv => kv.Value)
                 .OrderBy(kv => kv.Key)
+                .ToList();
+            dbInfo.ExitReadLock();
+            dbInfo = null;
+            if (expected.Count != resultList.Count)
+                Assert.Fail("Different number of items");
+            Assert.AreEqual(expected, resultList);
+        }
+        finally
+        {
+            dbInfo?.ExitReadLock();
+        }
+    }
+
+    protected void GetCheckReverse(string dbName, int from, int to, string? propertyName = null)
+    {
+        DatabaseInfo? dbInfo = null;
+        try
+        {
+            (dbInfo, var result) = Storage!.Get(dbName, from, to, true, propertyName);
+            var resultList = result.ToList();
+            var expected = Items
+                .Where(kv =>
+                    kv.Key.DbName == dbName && kv.Key.Key >= from && kv.Key.Key <= to &&
+                    kv.Key.PropertyName == propertyName)
+                .Select(kv => kv.Value)
+                .OrderByDescending(kv => kv.Key)
                 .ToList();
             dbInfo.ExitReadLock();
             dbInfo = null;

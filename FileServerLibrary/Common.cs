@@ -97,7 +97,7 @@ public sealed record KeyValue(int Key, int Version, byte[] Value)
 public interface IStoragePlugin : IPlugin, IDisposable
 {
     // database info and IEnumerable of KeyValue
-    (DatabaseInfo, IEnumerable<KeyValue>) Get(string dbName, int from, int to, string? propertyName = null);
+    (DatabaseInfo, IEnumerable<KeyValue>) Get(string dbName, int from, int to, bool reverse, string? propertyName = null);
     (DatabaseInfo, int) GetFileVersion(string dbName, int key, string? propertyName = null);
     // database info and KeyValue
     (DatabaseInfo, KeyValue?) GetLast(string dbName, int from, int to, string? propertyName = null);

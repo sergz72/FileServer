@@ -60,7 +60,7 @@ public sealed class TimeSeriesStorageTest(): GenericKeyValueStorageTest<TimeSeri
     TimeSeriesDatabaseParameters.DateToDayNumber(MinDate), 
     MaxDate.DayNumber)
 {
-    private const int MinDate = 20120101;
+    private const int MinDate = 20111231;
     private static readonly DateOnly MaxDate = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(NumDaysFromNow);
     private static readonly int MaxIntDate = TimeSeriesDatabaseInfo.BuildDate(MaxDate);
     private const int NumDaysFromNow = 3650;
@@ -172,13 +172,13 @@ public sealed class TimeSeriesStorageTest(): GenericKeyValueStorageTest<TimeSeri
         Assert.That(storage.GetTotalSize("db1"), Is.EqualTo(0));
         Assert.That(storage.GetTotalSize("db2"), Is.EqualTo(0));
         // test 1
-        var (dbInfo, result) = storage.Get("db1", 20120101, 20120101);
+        var (dbInfo, result) = storage.Get("db1", 20120101, 20120101, false);
         var resultList = result.ToList();
         dbInfo.ExitReadLock();
         Assert.That(resultList.Count, Is.EqualTo(1));
         Assert.That(resultList[0], Is.EqualTo(new KeyValue(20120101, testData.Test1Version, testData.Test1Data)));
         // test 2
-        (dbInfo, result) = storage.Get("db1", 20120101, 20120101, "aggregated");
+        (dbInfo, result) = storage.Get("db1", 20120101, 20120101, false, "aggregated");
         resultList = result.ToList();
         dbInfo.ExitReadLock();
         Assert.That(resultList.Count, Is.EqualTo(1));
@@ -212,7 +212,7 @@ public sealed class TimeSeriesStorageTest(): GenericKeyValueStorageTest<TimeSeri
     private void Test6(TimeSeriesStorage storage, TimeSeriesGetSetTestData testData)
     {
         // test 6
-        var (dbInfo, result) = storage.Get("db2", 20120101, 20120104);
+        var (dbInfo, result) = storage.Get("db2", 20120101, 20120104, false);
         var resultList = result.ToList();
         dbInfo.ExitReadLock();
         Assert.That(resultList.Count, Is.EqualTo(4));
@@ -220,6 +220,15 @@ public sealed class TimeSeriesStorageTest(): GenericKeyValueStorageTest<TimeSeri
         Assert.That(resultList[1], Is.EqualTo(new KeyValue(20120102, testData.Test6Version2, testData.Test6Data2)));
         Assert.That(resultList[2], Is.EqualTo(new KeyValue(20120103, testData.Test6Version3, testData.Test5Data[0].Value)));
         Assert.That(resultList[3], Is.EqualTo(new KeyValue(20120104, testData.Test6Version4, testData.Test5Data[1].Value)));
+
+        (dbInfo, result) = storage.Get("db2", 20120101, 20120104, true);
+        resultList = result.ToList();
+        dbInfo.ExitReadLock();
+        Assert.That(resultList.Count, Is.EqualTo(4));
+        Assert.That(resultList[3], Is.EqualTo(new KeyValue(20120101, testData.Test6Version, testData.Test6Data)));
+        Assert.That(resultList[2], Is.EqualTo(new KeyValue(20120102, testData.Test6Version2, testData.Test6Data2)));
+        Assert.That(resultList[1], Is.EqualTo(new KeyValue(20120103, testData.Test6Version3, testData.Test5Data[0].Value)));
+        Assert.That(resultList[0], Is.EqualTo(new KeyValue(20120104, testData.Test6Version4, testData.Test5Data[1].Value)));
     }
 
     [Test]

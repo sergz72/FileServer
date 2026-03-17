@@ -260,7 +260,7 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
         }
     }
 
-    internal IEnumerable<KeyValue> Get(int from, int to, string? propertyName)
+    internal IEnumerable<KeyValue> Get(int from, int to, bool reverse, string? propertyName)
     {
         Cleanup(true);
         var fromKey = _parameters.DateToKey(from);
@@ -268,9 +268,11 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
         EnterReadLock();
         try
         {
-            var result = Enumerable.Range(fromKey, toKey - fromKey + 1)
+            var range = Enumerable.Range(fromKey, toKey - fromKey + 1);
+            if (reverse) range = range.Reverse();
+            var result = range
                 .Select(i => _entries[i]?.Get(DbName, _parameters.Versioned, _parameters.StorageInterface,
-                    propertyName, _lru, ref _totalSize, this))
+                        propertyName, _lru, ref _totalSize, this))
                 .Where(kv => kv != null)
                 .Cast<KeyValue>();
             return result;
@@ -419,7 +421,7 @@ public sealed class TimeSeriesDatabaseInfo : DatabaseInfo
     public override void ExitReadLock() => Lock.ExitUpgradeableReadLock();
 }
 
-public sealed class TimeSeriesStorage: GenericKeyValueStorage<TimeSeriesDatabaseInfo>
+public class TimeSeriesStorage: GenericKeyValueStorage<TimeSeriesDatabaseInfo>
 {
     private Dictionary<string, TimeSeriesDatabaseParameters> _databaseParameters = null!;
 
@@ -459,10 +461,10 @@ public sealed class TimeSeriesStorage: GenericKeyValueStorage<TimeSeriesDatabase
             dbInfo.WriteDirtyData();
     }
 
-    public override (DatabaseInfo, IEnumerable<KeyValue>) Get(string dbName, int from, int to, string? propertyName = null)
+    public override (DatabaseInfo, IEnumerable<KeyValue>) Get(string dbName, int from, int to, bool reverse, string? propertyName = null)
     {
         var dbInfo = GetDatabaseInfo(dbName);
-        return (dbInfo, dbInfo.Get(from, to, propertyName));
+        return (dbInfo, dbInfo.Get(from, to, reverse, propertyName));
     }
 
     public override (DatabaseInfo, KeyValue?) GetLast(string dbName, int from, int to, string? propertyName = null)
